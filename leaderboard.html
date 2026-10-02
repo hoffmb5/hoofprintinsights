@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Hoofprint Insights — Leaderboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f8f7f4;color:#1A1A1A;padding:20px}
+.wrap{max-width:700px;margin:0 auto}
+.hdr{background:#49306E;border-radius:12px;padding:18px 22px 14px;margin-bottom:16px}
+.hdr h1{font-size:22px;font-weight:800;color:#fff;margin:0 0 3px}
+.hdr .sub{font-size:13px;color:#D4C5E8}
+.hdr .meta{display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap}
+.badge{background:#FEBD11;color:#3E375A;font-size:12px;font-weight:700;padding:4px 12px;border-radius:20px}
+.current-del{font-size:13px;color:#D4C5E8}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.stat{background:#fff;border:0.5px solid #e0ddd6;border-radius:10px;padding:12px 16px}
+.stat .sl{font-size:11px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:#8B6F90;margin-bottom:4px}
+.stat .sv{font-size:26px;font-weight:700;color:#49306E}
+.stat .sv.grn{color:#2D6A4F}
+.stat .sv.red{color:#A32D2D}
+.board{background:#fff;border:0.5px solid #e0ddd6;border-radius:12px;overflow:hidden}
+.board-head{display:grid;grid-template-columns:44px 1fr 80px 110px;background:#3E375A;padding:9px 16px;font-size:11px;font-weight:600;color:#D4C5E8;letter-spacing:1.5px;text-transform:uppercase}
+.row{display:grid;grid-template-columns:44px 1fr 80px 110px;padding:12px 16px;border-bottom:0.5px solid #f0ece4;align-items:center}
+.row:last-child{border-bottom:none}
+.row.s{border-left:4px solid #2D6A4F}
+.row.a{border-left:4px solid #BA7517}
+.row.f{border-left:4px solid #A32D2D;background:#fff8f8}
+.row.n{border-left:4px solid #D4C5E8}
+.rank{font-size:14px;font-weight:700;color:#8B6F90}
+.rank.top{color:#49306E;font-size:16px}
+.medal{font-size:18px}
+.name{font-size:15px;font-weight:500;color:#1A1A1A}
+.members{font-size:12px;color:#8B6F90;margin-top:3px;line-height:1.4;padding-right:10px}
+.score{font-size:14px;font-weight:600;color:#49306E}
+.pill{font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;display:inline-block}
+.pill.s{background:#E8F5E9;color:#2D6A4F}
+.pill.a{background:#FFF8E1;color:#BA7517}
+.pill.f{background:#FFEBEE;color:#A32D2D}
+.pill.n{background:#EDE8F5;color:#49306E}
+.note{background:#EDE8F5;border-left:4px solid #49306E;padding:10px 14px;border-radius:0 8px 8px 0;margin-top:14px;font-size:13px;color:#3E375A;line-height:1.6}
+@media (max-width:520px){
+  .board-head,.row{grid-template-columns:34px 1fr 64px 92px;padding-left:10px;padding-right:10px}
+  .pill{font-size:11px;padding:3px 8px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="hdr">
+  <h1>Hoofprint Insights</h1>
+  <div class="sub">Venture Studio — Competing Team Leaderboard</div>
+  <div class="meta">
+    <span class="badge" id="del-badge">-</span>
+    <span class="current-del" id="del-name">-</span>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="sl">Teams</div><div class="sv" id="s-total">-</div></div>
+  <div class="stat"><div class="sl">Surviving</div><div class="sv grn" id="s-surv">-</div></div>
+  <div class="stat"><div class="sl">At Risk / Folding</div><div class="sv red" id="s-risk">-</div></div>
+</div>
+
+<div class="board">
+  <div class="board-head">
+    <span>Rank</span><span>Team</span><span>Score</span><span>Status</span>
+  </div>
+  <div id="rows"></div>
+</div>
+
+
+</div>
+<script>
+
+// ╔══════════════════════════════════════════════════╗
+// ║  EDIT THIS SECTION AFTER EACH DELIVERABLE        ║
+// ╚══════════════════════════════════════════════════╝
+
+const DELIVERABLE = {
+  label:  "D0",                   // short badge: D0, D1, D2 ... D6
+  name:   "Team Founding Packet", // deliverable full name
+  maxPts: 100,                    // max points for this deliverable
+};
+
+// score: number (e.g. 87) or null if not yet graded
+// status: "s" = Surviving  |  "a" = At Risk  |  "f" = Folding  |  "n" = Pending
+// members: list of names (leave [] to hide)
+const TEAMS = [
+  { name: "Money Talks", score: null, status: "s",
+    members: ["Peter Johaneson", "Alexander Jahota", "Braedyn Male", "Morgan Bjella"] },
+  { name: "ChatChippyTea", score: null, status: "s",
+    members: ["Tyler Weinberger", "Gareth Price", "Ava Johnsen", "Riley Hirschley"] },
+  { name: "Herd AI Solutions", score: null, status: "s",
+    members: ["Bezawit Berhanu", "Lucas Wells", "Nova Pilarski", "Kevin Vogl"] },
+  { name: "Braeburn Ventures", score: null, status: "s",
+    members: ["Emily Dittrich", "Ari Wells", "Bennett Glad", "Eyuel Tadesse"] },
+  { name: "Minnesota Insights", score: null, status: "s",
+    members: ["Kaiden Kopick", "Lauryn Nauman", "Luis Farias", "Tucker Haraldson"] },
+  { name: "Vikings Consulting Group", score: null, status: "s",
+    members: ["Kyle Nilson", "Ben Anderson", "Bailey Walla", "Chase Faust"] },
+  { name: "Stomper Solutions", score: null, status: "s",
+    members: ["Peyton Byrne", "Emma Nguyen", "Jade Wildt"] },
+  { name: "Apex Mind", score: null, status: "s",
+    members: ["Maxwell Burnett", "Katina Watson", "Cody Sieben"] },
+  { name: "Error 404", score: null, status: "s",
+    members: ["Daria Oellhers", "Marlee Gibson", "Jackson McNulty", "Matthew Meduna"] },
+  { name: "AI Avengers", score: null, status: "s",
+    members: ["Christopher Conlin", "Natalie Lackorzynski", "Zachary Dinsmore", "Morgan Heilman"] },
+];
+
+// ╔══════════════════════════════════════════════════╗
+// ║  DO NOT EDIT BELOW THIS LINE                     ║
+// ╚══════════════════════════════════════════════════╝
+
+const LABELS = { s:"Surviving", a:"At Risk", f:"Folding", n:"Pending" };
+const MEDALS = ["🥇","🥈","🥉"];
+
+(function render() {
+  document.getElementById("del-badge").textContent = DELIVERABLE.label;
+  document.getElementById("del-name").textContent =
+    DELIVERABLE.name + " \u2014 " + DELIVERABLE.maxPts + " pts";
+
+  const sorted = [...TEAMS].sort((a,b)=>{
+    if (a.score===null && b.score===null) return 0;
+    if (a.score===null) return 1;
+    if (b.score===null) return -1;
+    return b.score - a.score;
+  });
+
+  const surv = sorted.filter(t=>t.status==="s").length;
+  const risk = sorted.filter(t=>t.status==="a"||t.status==="f").length;
+  document.getElementById("s-total").textContent = sorted.length;
+  document.getElementById("s-surv").textContent = surv;
+  document.getElementById("s-risk").textContent = risk;
+
+  const container = document.getElementById("rows");
+  container.innerHTML = "";
+  sorted.forEach((t,i)=>{
+    const graded = t.score !== null;
+    const rank = (i<3 && graded)
+      ? `<div class="medal">${MEDALS[i]}</div>`
+      : `<div class="rank${i<3?' top':''}">${i+1}</div>`;
+    const scoreCell = graded
+      ? `<div class="score">${t.score}<span style="font-size:11px;color:#aaa;font-weight:400"> /${DELIVERABLE.maxPts}</span></div>`
+      : `<div style="font-size:13px;color:#ccc">\u2014</div>`;
+    const members = (t.members && t.members.length)
+      ? `<div class="members">${t.members.join(" \u00b7 ")}</div>`
+      : "";
+    const div = document.createElement("div");
+    div.className = "row " + t.status;
+    div.innerHTML = rank +
+      `<div><div class="name">${t.name}</div>${members}</div>` +
+      scoreCell +
+      `<div><span class="pill ${t.status}">${LABELS[t.status]}</span></div>`;
+    container.appendChild(div);
+  });
+})();
+
+</script>
+</body>
+</html>
