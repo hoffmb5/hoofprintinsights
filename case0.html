@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MGMT 459 · The Scaling Sprint</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+
+<style>
+  html, body, #root { height: 100%; }
+  body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #F5F4EE; }
+  #boot {
+    position: fixed; inset: 0; background: #F5F4EE;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-family: Georgia, serif; color: #0F1729; z-index: 9999; transition: opacity .3s ease;
+  }
+  #boot .tag { font-size: 11px; letter-spacing: 0.2em; color: #475569; text-transform: uppercase; font-weight: 600; font-family: ui-sans-serif, system-ui, sans-serif; margin-bottom: 14px; }
+  #boot h1 { font-size: 44px; font-weight: 600; margin: 0 0 8px 0; letter-spacing: -0.02em; }
+  #boot p { font-size: 15px; color: #475569; margin: 0; }
+  #boot.hidden { opacity: 0; pointer-events: none; }
+  #config-banner {
+    position: fixed; top: 0; left: 0; right: 0;
+    background: #B45309; color: white; padding: 12px 20px;
+    font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px;
+    text-align: center; z-index: 10000; display: none;
+  }
+  #config-banner.show { display: block; }
+  #config-banner code { background: rgba(0,0,0,0.25); padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<!-- ====================================================================
+     CONFIGURATION — EDIT THE LINE BELOW
+     Use the SAME SHEETS_URL as the main simulator. This file writes under
+     a different key (ccs-dryrun-v1) so it won't collide with the main
+     simulator's data in the same sheet.
+     ==================================================================== -->
+<script>
+  window.CCS_CONFIG = {
+    SHEETS_URL: 'https://script.google.com/macros/s/AKfycbxrNINUJwPzVCwdi2FpFuELlIxireC5kjS_7s3sLhJNZujhF84lg8E8QFLlL6EMzSHXAg/exec',   // ← PASTE YOUR GOOGLE APPS SCRIPT URL HERE (same as main simulator)
+    POLL_SECONDS: 10,
+  };
+</script>
+
+<div id="config-banner">
+  ⚠ Sheets backend not configured. Running in local-only mode (per-browser).
+  Edit the HTML: set <code>SHEETS_URL</code> near the top (same URL as the main simulator).
+</div>
+
+<div id="boot">
+  <div class="tag">MGMT 459 · Session 7</div>
+  <h1>The Scaling Sprint</h1>
+  <p>Loading…</p>
+</div>
+
+<div id="root"></div>
+
+<script>
+  // ============ window.storage shim — Google Sheets backend ============
+  (function () {
+    const LS_PREFIX = 'ccs-dr::';
+    const cfg = window.CCS_CONFIG || {};
+    const url = (cfg.SHEETS_URL || '').trim();
+    const hasBackend = url && url.startsWith('http');
+    if (!hasBackend) document.getElementById('config-banner').classList.add('show');
+
+    async function readSheet(key) {
+      const resp = await fetch(url + '?key=' + encodeURIComponent(key), { method: 'GET', redirect: 'follow' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return await resp.text();
+    }
+    async function writeSheet(payload) {
+      await fetch(url, {
+        method: 'POST', redirect: 'follow',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload),
+      });
+    }
+
+    window.storage = {
+      async get(key) {
+        if (hasBackend) {
+          try {
+            const text = await readSheet(key);
+            if (text) { try { localStorage.setItem(LS_PREFIX + key, text); } catch (_) {} return { value: text }; }
+          } catch (e) { console.warn('[CCS-DR] Sheet read failed:', e.message); }
+        }
+        try { const raw = localStorage.getItem(LS_PREFIX + key); return raw ? { value: raw } : null; }
+        catch (_) { return null; }
+      },
+      async set(key, value) {
+        try { localStorage.setItem(LS_PREFIX + key, value); } catch (_) {}
+        if (!hasBackend) return true;
+        try { await writeSheet({ key: key, value: value }); return true; }
+        catch (e) { console.warn('[CCS-DR] Sheet write failed:', e.message); return false; }
+      },
+      async delete(key) {
+        try { localStorage.removeItem(LS_PREFIX + key); } catch (_) {}
+        if (!hasBackend) return true;
+        try { await writeSheet({ key: key, action: 'delete' }); return true; } catch (e) { return false; }
+      },
+      _hasSharedBackend: hasBackend,
+    };
+  })();
+  window.addEventListener('error', function (ev) {
+    console.error('[CCS-DR] Load error:', ev.message, 'at', ev.filename, ev.lineno);
+  });
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
+
+// ═══════════════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════════════
+const STORAGE_KEY = "ccs-dryrun-v1";
+const ADMIN_PASSWORD = "hoofprint";
+const TEAM_CODES = ["4823","3718","6371","5683","9024","1497","8205","6592","7156","2940"];
+
+// ═══════════════════════════════════════════════════════════════════
+// CASE 0 — DRY RUN: ONBOARDING THREE CO-OPS
+// ═══════════════════════════════════════════════════════════════════
+const CASE_0 = {
+  id: 0,
+  name: "Case 0 — The Scaling Sprint",
+  stakeholder: "Priya Nair",
+  stakeholderRole: "CEO, Hoofprint Insights",
+  oneLiner: "Priya just signed three co-op contracts — 400 member farms total, 45 days to go live. Cut onboarding time 40% without new headcount.",
+  constraint: "No new headcount. No scope cut (every promised deliverable still ships). Sensitive co-op data must be protected. A bad onboarding experience could tank Hoofprint's Upper Midwest reputation. Priya wants a plan by Friday.",
+  task: "Make 5 calls — one for each onboarding task — on how AI and your 15-person team split the work. This is a soft launch of the simulator. Nothing you pick here affects your score on Cases 1-3. At the end, you'll see how your choices stacked up against the AI use policy your team wrote in Session 5.",
+  decisions: [
+    {
+      key: 'intake',
+      taskNumber: 1,
+      label: "Task 1 — Initial data intake & form validation",
+      prompt: "You need operational data on all 400 member farms into the platform. Some records are standardized, some are messy. How?",
+      options: [
+        { id: 'manual',   label: 'Manual entry — team keys in everything, no AI', summary: 'Slowest. No policy risk. Doesn\'t meet the 40% speed-up goal.', policyTouches: [] },
+        { id: 'ai_bulk',  label: 'Upload raw farm records to Claude; team reviews exceptions', summary: 'Fastest intake. Puts raw co-op member farm data into AI.', policyTouches: ['creation'], dataExposed: ['client_data','farm_data','sensitive_data'] },
+        { id: 'ai_rules', label: 'Humans enter data; AI generates validation rules that catch errors post-entry', summary: 'Middle ground. No raw data to AI, but AI assists quality control.', policyTouches: [] },
+        { id: 'ai_full',  label: 'Fully automated pipeline — AI ingests, validates, flags; team reviews flags only', summary: 'Fastest + least human time. All data flows through AI with minimal review.', policyTouches: ['creation','deployment'], dataExposed: ['client_data','farm_data','sensitive_data'] }
+      ]
+    },
+    {
+      key: 'welcome',
+      taskNumber: 2,
+      label: "Task 2 — Welcome communication to co-op leadership",
+      prompt: "Each co-op's leadership and key operators need a welcome. Communications must feel personal and professional. How?",
+      options: [
+        { id: 'manual_write',   label: 'Hand-written by account lead per co-op', summary: 'Highest touch. Doesn\'t scale. No policy risk.', policyTouches: [] },
+        { id: 'ai_draft_review', label: 'AI drafts personalized emails using co-op profile; account lead reviews every one', summary: 'Fast + reviewed. Will require disclosure per most policies.', policyTouches: ['transparency','deployment'], humanTaskUsed: ['client_email','client_comms'] },
+        { id: 'ai_spot_check',  label: 'AI drafts emails; team spot-checks 10%; rest auto-send', summary: 'Fast, but 90% of client-facing emails have no human review.', policyTouches: ['transparency','deployment'], humanTaskUsed: ['client_email','client_comms'] },
+        { id: 'ai_full_auto',   label: 'Fully automated AI welcome sequence — no human in the loop', summary: 'Maximum scale. AI is the only voice reaching clients.', policyTouches: ['creation','transparency','deployment'], humanTaskUsed: ['client_email','client_comms'], dataExposed: ['client_data'] }
+      ]
+    },
+    {
+      key: 'dashboard',
+      taskNumber: 3,
+      label: "Task 3 — Custom dashboard configuration",
+      prompt: "Each co-op needs a dashboard tailored to their metrics and reporting preferences. Template exists, but needs customization. How?",
+      options: [
+        { id: 'manual_config',    label: 'Humans customize dashboards from template', summary: 'Known quantity. Slow. Doesn\'t meet speed-up goal.', policyTouches: [] },
+        { id: 'ai_config_reviewed', label: 'AI generates custom config from co-op profile; team reviews before client sees', summary: 'Fast with checkpoints. Co-op metrics data enters AI.', policyTouches: ['creation','deployment'], dataExposed: ['metrics','financial_data'] },
+        { id: 'ai_auto_deploy',   label: 'AI generates and auto-deploys dashboards; team monitors post-launch', summary: 'Maximum speed. Nothing reviewed pre-client. Metrics data to AI.', policyTouches: ['creation','deployment'], dataExposed: ['metrics','financial_data'] },
+        { id: 'ai_wizard_self',   label: 'Co-op admins self-configure using an AI-assisted wizard the team builds', summary: 'Clever offload. Clients know AI is in the loop (disclosure needed).', policyTouches: ['transparency'] }
+      ]
+    },
+    {
+      key: 'training',
+      taskNumber: 4,
+      label: "Task 4 — Training & platform orientation",
+      prompt: "Training content exists but was built for 1-on-1 delivery. How do you train 3 co-ops without 3× the hours?",
+      options: [
+        { id: 'live_1on1',     label: 'Keep live 1-on-1 sessions per co-op', summary: 'Highest quality. Doesn\'t scale.', policyTouches: [] },
+        { id: 'video_qa',      label: 'One master training video (AI-drafted script) + live Q&A per co-op', summary: 'Good balance. Need to disclose AI\'s role in creating materials.', policyTouches: ['transparency'] },
+        { id: 'ai_module',     label: 'AI-generated interactive module personalized per co-op; auto-delivered', summary: 'Scales to any size. No human face in training.', policyTouches: ['transparency','deployment'] },
+        { id: 'group_chatbot', label: 'Live group session for all 3 co-ops at once + AI chatbot for post-session Q&A', summary: 'Hybrid. Chatbot answers may miss nuance; who monitors it?', policyTouches: ['deployment'] }
+      ]
+    },
+    {
+      key: 'checkin',
+      taskNumber: 5,
+      label: "Task 5 — First 30-day check-in & issue resolution",
+      prompt: "This is currently the highest-touch step. You're checking in on 400 farms across 3 co-ops. How?",
+      options: [
+        { id: 'personal_call',       label: 'Account lead calls each co-op personally', summary: 'Classic approach. Won\'t scale to 3 big co-ops.', policyTouches: [] },
+        { id: 'ai_prep_human_sent',  label: 'AI pre-reads usage data, drafts issue list; account lead reaches out personally', summary: 'Balanced. Client sees a human; AI does the backroom prep.', policyTouches: ['creation'], dataExposed: ['client_data','metrics'] },
+        { id: 'ai_auto_email',       label: 'AI auto-sends personalized check-in emails; team intervenes only on flags', summary: 'High scale, low oversight. Clients mostly interact with AI.', policyTouches: ['creation','transparency','deployment'], dataExposed: ['client_data','metrics'], humanTaskUsed: ['client_email'] },
+        { id: 'ai_full_resolve',     label: 'Fully automated: AI monitors, emails, resolves routine issues, escalates only critical', summary: 'Highest leverage. AI is the client\'s primary contact.', policyTouches: ['creation','transparency','deployment'], dataExposed: ['client_data','metrics'], humanTaskUsed: ['client_email','client_comms'] }
+      ]
+    }
+  ]
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// TEAM_POLICIES — distilled from each team's S5 Policy Share-Out
+// ═══════════════════════════════════════════════════════════════════
+const TEAM_POLICIES = {
+  '4823': { firm: 'Money Talks',
+    dataNeverIntoAI: ['client_data','sensitive_data'], humanOnlyTasks: [],
+    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: 'Morgan',
+    disclosureText: '"We utilized AI tools to help create this artifact. We double checked to ensure accuracy of the information."',
+    strongestRule: 'Still debating which rule is strongest.',
+    whereDisagreed: 'The team argued about which rule was their strongest.',
+    rules: {
+      creation: "Never give AI private personal information before asking the client; final decisions that can hurt someone's career stay 100% human.",
+      transparency: "Disclose to clients and investors anytime AI is used, including how.",
+      deployment: "Morgan checks all outputs, inputs, and sources before sending.",
+      diligence: "Take ownership for AI use; disclose when giving information to a client."
+    }
+  },
+  '3718': { firm: 'Error 404',
+    dataNeverIntoAI: ['client_data','sensitive_data'], humanOnlyTasks: [],
+    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: 'Daria',
+    disclosureText: '"Our reports will disclose all AI usage and all information will be backed up by a team member."',
+    strongestRule: '"We tell investors when AI is used and who checked the accuracy of our output."',
+    whereDisagreed: 'Argued whether "no client info in free AI tools" is too broad — "client information can be very broad."',
+    rules: {
+      creation: "Never input sensitive client information into AI tools without permission.",
+      transparency: "Reports disclose all AI usage; backed up by a team member.",
+      deployment: "Daria checks accuracy of all AI output before reports are sent.",
+      diligence: "Take accountability for prompts and outputs."
+    }
+  },
+  '6371': { firm: 'Braeburn Ventures',
+    dataNeverIntoAI: ['client_data','sensitive_data','financial_data'], humanOnlyTasks: ['screening_applications'],
+    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: 'Eyuel',
+    disclosureText: '"This is an AI-generated response."',
+    strongestRule: 'Verify AI-produced outputs before they go to a client.',
+    whereDisagreed: 'How often to verify, and whether to check both inputs and outputs or just outputs.',
+    rules: {
+      creation: "Never put sensitive info (names, addresses, SSN, phone, banking, proprietary data) into AI. Complex monetary strategy stays human.",
+      transparency: "Label AI-generated responses; disclose on client-facing automation.",
+      deployment: "Eyuel checks research/sources/I-O; a second member double-checks.",
+      diligence: "Group owns the final work; disclose at presentation."
+    }
+  },
+  '5683': { firm: 'Stomper Solutions',
+    dataNeverIntoAI: ['client_data','sensitive_data'], humanOnlyTasks: [],
+    disclosureRequired: false, deploymentCheckerBypassAllowed: false, namedChecker: 'Peyton (output), Emma (research), Jade (data entry)',
+    disclosureText: '"Stomper Solutions works side by side with Google Gemini to advance and excel group performance as well as productivity." (shared only when asked)',
+    strongestRule: '"We will continue to give 100% effort and not just let AI think for us. We will hold ourselves to a high professional standard."',
+    whereDisagreed: 'Whether to disclose AI use to clients only when asked, or always openly.',
+    rules: {
+      creation: "Never give AI personal client information; focus on real numbers and client stats. All inputs by a trusted member.",
+      transparency: "Only disclose AI use when asked (team is internally split on this).",
+      deployment: "Peyton reviews output, Emma reviews research, Jade reviews data entered.",
+      diligence: "Responsible for AI use personally and as a team."
+    }
+  },
+  '9024': { firm: 'Apex Minds',
+    dataNeverIntoAI: ['client_data','sensitive_data'], humanOnlyTasks: [],
+    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: '(TBD — policy pending)',
+    disclosureText: '(TBD — team to specify in S5 share-out)',
+    strongestRule: '(TBD — team policy pending submission)',
+    whereDisagreed: '(TBD — team policy pending submission)',
+    policyPending: true,
+    rules: {
+      creation: "Never put personal information into AI; basic numbers and metrics OK.",
+      transparency: "Disclose AI usage to clients early for trust.",
+      deployment: "Double-check facts and sources before use.",
+      diligence: "Everyone is liable; group effort."
+    }
+  },
+  '1497': { firm: 'Vikings Consulting Group',
+    dataNeverIntoAI: ['client_data','sensitive_data','financial_data'], humanOnlyTasks: ['client_comms','client_email'],
+    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: 'Kyle',
+    disclosureText: '"We will disclose any use of AI on work regarding a client, including who has reviewed the work."',
+    strongestRule: 'Deployment — verifiable, systematic, clear breakpoint when broken.',
+    whereDisagreed: 'No real disagreement — team was unified across the four rules.',
+    rules: {
+      creation: "Never input financial, medical, or personal client/company information into AI. Any decision directly impacting a person is 100% human.",
+      transparency: "Disclose AI use on all client-facing work, including who reviewed.",
+      deployment: "Kyle reviews any AI-touched work before client sees it.",
+      diligence: "Disclose and take accountability."
+    }
+  },
+  '8205': { firm: 'Minnesota Insights',
+    dataNeverIntoAI: ['client_data','sensitive_data'], humanOnlyTasks: ['client_comms','client_email'],
+    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: 'Kaiden',
+    disclosureText: 'Luis informs clients when and how AI was used and who verified the output.',
+    strongestRule: 'Creation — "no matter if we tell clients or not, the creation of the AI output will follow this rule."',
+    whereDisagreed: 'No disagreement — all four areas important.',
+    rules: {
+      creation: "Remove private client info before any file enters AI. Client communication, pricing, and employment decisions stay 100% human.",
+      transparency: "Luis informs clients when/how AI was used and who verified.",
+      deployment: "Kaiden reviews all AI recommendations before use.",
+      diligence: "Entire team owns errors; corrects and prevents recurrence."
+    }
+  },
+  '6592': { firm: 'AI Avengers',
+    dataNeverIntoAI: ['client_data','sensitive_data','financial_data'], humanOnlyTasks: ['client_email','client_comms'],
+    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: 'Thomas',
+    disclosureText: '"(AI source) was used to (what AI did) which was verified by (who verified)."',
+    strongestRule: '(Not specified in share-out — field left blank)',
+    whereDisagreed: 'When it\'s appropriate to use AI at all (client emails, job postings, automated alerts).',
+    rules: {
+      creation: "Sensitive personal data, client names, finances, and confidential company info never go into AI. Client email and large-money decisions stay 100% human.",
+      transparency: "Disclose AI source + what AI did + who verified, on every output.",
+      deployment: "Thomas checks outputs for anything that shouldn't be shared.",
+      diligence: "Immediate incident response + direct client communication on errors."
+    }
+  },
+  '7156': { firm: 'ChatChippyTea',
+    dataNeverIntoAI: ['client_data','sensitive_data'], humanOnlyTasks: ['hr_decisions'],
+    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: 'Tyler (docs), Gareth (research), Ava/Riley (numbers)',
+    disclosureText: '"We used XX platform to assist in the creation of this final result. AI was used ethically, responsibly, and with consent."',
+    strongestRule: 'Transparency — "being transparent with our customers means preserving security, honesty, and integrity."',
+    whereDisagreed: 'Argued whether Creation could have been stronger than Transparency.',
+    rules: {
+      creation: "Personal client info, employee personal info, inappropriate prompts never go into AI. All HR decisions stay 100% human.",
+      transparency: "AI Disclosure attached to all AI-assisted work; weekly report to investors.",
+      deployment: "Tyler = docs; Gareth = research; Ava/Riley = numbers.",
+      diligence: "24-hour analysis + honest customer communication on errors."
+    }
+  },
+  '2940': { firm: 'Herd AI Solutions',
+    dataNeverIntoAI: ['client_data','sensitive_data','financial_data'], humanOnlyTasks: [],
+    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: 'Kevin (prompt), Nora (data), Bezawit (policy), Lucas (presentation)',
+    disclosureText: '"We will always be open to our clients about when AI is or isn\'t used to bring clarity about our work."',
+    strongestRule: 'Transparency — AI-assisted advice is always checked for reliability, bias, and error by real people.',
+    whereDisagreed: 'Clarifying each person\'s role within the Deployment rule.',
+    rules: {
+      creation: "Never include SSN, credit card, or private data in any AI model. When using private info, decision stays 100% human.",
+      transparency: "Open with clients about when AI is or isn't used; humans always have final say.",
+      deployment: "Kevin=prompt, Nora=sensitive info check, Bezawit=policy, Lucas=presentation.",
+      diligence: "Stop sharing on error; team notified; correct within 24 hrs."
+    }
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// POLICY FIDELITY CHECK
+// ═══════════════════════════════════════════════════════════════════
+function computePolicyFidelity(teamCode, picks) {
+  const policy = TEAM_POLICIES[teamCode];
+  if (!policy) return null;
+  const results = [];
+  for (const dec of CASE_0.decisions) {
+    const pickedId = picks[dec.key];
+    if (!pickedId) continue;
+    const opt = dec.options.find(o => o.id === pickedId);
+    if (!opt) continue;
+    const violations = [];
+    if (opt.policyTouches.includes('creation')) {
+      const dataExposed = opt.dataExposed || [];
+      const humanUsed = opt.humanTaskUsed || [];
+      if (dataExposed.some(d => policy.dataNeverIntoAI.includes(d))) violations.push('creation_data');
+      if (humanUsed.some(h => policy.humanOnlyTasks.includes(h))) violations.push('creation_human');
+    }
+    if (opt.policyTouches.includes('transparency') && policy.disclosureRequired) {
+      const bypassIds = ['ai_full_auto','ai_spot_check','ai_auto_email','ai_full_resolve','ai_auto_deploy','ai_module'];
+      if (bypassIds.includes(opt.id)) violations.push('transparency');
+    }
+    if (opt.policyTouches.includes('deployment') && !policy.deploymentCheckerBypassAllowed) {
+      const bypassIds = ['ai_full_auto','ai_spot_check','ai_auto_email','ai_full_resolve','ai_auto_deploy','ai_module'];
+      if (bypassIds.includes(opt.id)) violations.push('deployment');
+    }
+    results.push({ decisionKey: dec.key, taskLabel: dec.label, pickedId: opt.id, pickedLabel: opt.label, honored: violations.length === 0, violations });
+  }
+  const honored = results.filter(r => r.honored).length;
+  return { total: results.length, honored, violated: results.length - honored, details: results, policy };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// STATE HELPERS
+// ═══════════════════════════════════════════════════════════════════
+function createInitialState() {
+  return {
+    initialized: true,
+    released: false,
+    teams: TEAM_CODES.map((code, i) => ({ id: i + 1, code, firmName: null, picks: {}, completed: false, completedAt: null }))
+  };
+}
+
+async function loadData() {
+  try {
+    const r = await window.storage.get(STORAGE_KEY);
+    if (r && r.value) return JSON.parse(r.value);
+  } catch (_) {}
+  return null;
+}
+async function saveData(d) { try { await window.storage.set(STORAGE_KEY, JSON.stringify(d)); } catch (_) {} }
+
+// ═══════════════════════════════════════════════════════════════════
+// STYLING
+// ═══════════════════════════════════════════════════════════════════
+function StyleInjection() {
+  useEffect(() => {
+    if (document.getElementById('ccs-fonts')) return;
+    const link = document.createElement('link');
+    link.id = 'ccs-fonts';
+    link.rel = 'stylesheet';
+    link.href = 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=DM+Sans:wght@400;500;600;700&display=swap';
+    document.head.appendChild(link);
+  }, []);
+  return (
+    <style>{`
+      .font-display { font-family: 'Fraunces', Georgia, serif; letter-spacing: -0.02em; }
+      .font-body { font-family: 'DM Sans', -apple-system, system-ui, sans-serif; }
+      .ccs-cream { background-color: #F5F4EE; }
+      .ccs-paper { background-color: #FBFAF5; }
+      .ccs-navy { color: #0F1729; }
+      .ccs-navy-bg { background-color: #0F1729; }
+      .ccs-slate { color: #475569; }
+      .ccs-emerald { color: #047857; }
+      .ccs-emerald-bg { background-color: #047857; }
+      .ccs-amber { color: #B45309; }
+      .ccs-amber-bg { background-color: #B45309; }
+      .ccs-red { color: #B91C1C; }
+      .ccs-red-bg { background-color: #B91C1C; }
+      .ccs-border { border-color: #E5E4DD; }
+      .ccs-hover-navy:hover { background-color: #1E293B; }
+      .ccs-hover-emerald:hover { background-color: #065F46; }
+      .ccs-input { background: #FBFAF5; border: 1px solid #E5E4DD; padding: 10px 14px; border-radius: 6px; font-family: inherit; color: #0F1729; width: 100%; }
+      .ccs-input:focus { outline: none; border-color: #0F1729; }
+      .ccs-card { background: #FBFAF5; border: 1px solid #E5E4DD; border-radius: 8px; }
+      .ccs-card-elevated { background: #FFFFFF; border: 1px solid #E5E4DD; border-radius: 8px; box-shadow: 0 2px 4px rgba(15,23,41,0.04); }
+      .ccs-opt { background: #FBFAF5; border: 1px solid #E5E4DD; border-radius: 8px; padding: 14px 16px; cursor: pointer; transition: border-color .15s, background .15s; }
+      .ccs-opt:hover { border-color: #0F1729; background: #FFFFFF; }
+      .ccs-opt.selected { background: #0F1729; border-color: #0F1729; color: #FFFFFF; }
+      .ccs-opt.selected .opt-summary { color: #CBD5E1; }
+      .ccs-opt .opt-label { font-weight: 600; }
+      .ccs-opt .opt-summary { font-size: 13px; color: #475569; margin-top: 4px; }
+      .tabular { font-variant-numeric: tabular-nums; }
+      @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+      .fade-up { animation: fadeUp .4s ease-out; }
+    `}</style>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// LOGIN SCREEN
+// ═══════════════════════════════════════════════════════════════════
+function LoginScreen({ onLogin, onAdmin }) {
+  const [code, setCode] = useState('');
+  const [firmName, setFirmName] = useState('');
+  const [err, setErr] = useState('');
+
+  function submit() {
+    if (!TEAM_CODES.includes(code.trim())) { setErr('Not a valid team code.'); return; }
+    const policy = TEAM_POLICIES[code.trim()];
+    const name = firmName.trim() || (policy && policy.firm) || '';
+    if (!name) { setErr('Enter your firm name.'); return; }
+    onLogin(code.trim(), name);
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-6 ccs-cream">
+      <div className="font-body text-xs uppercase tracking-widest ccs-slate mb-3">MGMT 459 · Session 7</div>
+      <h1 className="font-display text-5xl ccs-navy mb-1" style={{fontWeight: 500}}>The Scaling Sprint</h1>
+      <p className="ccs-slate text-sm mb-10">A soft launch of the Consulting Case Simulator. Teaches the UI; nothing scores.</p>
+      <div className="ccs-card-elevated p-6 w-full max-w-md fade-up">
+        <label className="block text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Team Code</label>
+        <input className="ccs-input mb-4 tabular text-center text-lg" placeholder="4-digit code"
+          value={code} onChange={e => setCode(e.target.value)} maxLength={4}
+          onKeyDown={e => e.key === 'Enter' && submit()} />
+        <label className="block text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Firm Name</label>
+        <input className="ccs-input mb-4" placeholder="Your team's firm name"
+          value={firmName} onChange={e => setFirmName(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && submit()} />
+        {err && <div className="ccs-red text-sm mb-3">{err}</div>}
+        <button onClick={submit}
+          className="w-full ccs-navy-bg ccs-hover-navy text-white font-medium rounded px-5 py-3 text-sm">Enter</button>
+        <button onClick={onAdmin} className="w-full mt-3 ccs-slate text-xs uppercase tracking-widest hover:ccs-navy">Instructor Access</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DASHBOARD — pre-release & post-complete states
+// ═══════════════════════════════════════════════════════════════════
+function Dashboard({ data, team, onBegin, onLogout, onReviewDebrief }) {
+  const completedCount = data.teams.filter(t => t.completed).length;
+  return (
+    <div className="min-h-screen ccs-cream">
+      <header className="border-b ccs-border bg-white">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div>
+            <div className="text-xs uppercase tracking-widest ccs-slate font-medium">MGMT 459 · Session 7</div>
+            <div className="font-display text-xl ccs-navy" style={{fontWeight: 500}}>The Scaling Sprint</div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <div className="text-xs ccs-slate uppercase tracking-wider">{team.code}</div>
+              <div className="text-sm ccs-navy font-medium">{team.firmName}</div>
+            </div>
+            <button onClick={onLogout} className="text-xs ccs-slate uppercase tracking-widest hover:ccs-navy">Log Out</button>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-5xl mx-auto px-6 py-10 fade-up">
+        <div className="mb-8">
+          <h1 className="font-display text-4xl ccs-navy mb-2" style={{fontWeight: 500}}>Welcome, {team.firmName}.</h1>
+          <p className="ccs-slate text-sm">This is a soft launch of the simulator you'll use for the three real cases. Nothing you pick here affects your Case 1-3 score. At the end you'll see how your choices stacked up against your team's own AI policy.</p>
+        </div>
+
+        <div className="ccs-card-elevated p-6">
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">Case 0</div>
+              <h2 className="font-display text-2xl ccs-navy mb-1" style={{fontWeight: 500}}>Onboarding Three Co-ops</h2>
+              <div className="text-sm ccs-slate mb-3">{CASE_0.stakeholder} · {CASE_0.stakeholderRole}</div>
+              <p className="text-sm ccs-navy leading-relaxed">{CASE_0.oneLiner}</p>
+            </div>
+            <div className="text-xs ccs-amber font-semibold uppercase tracking-wider ccs-amber-bg bg-opacity-10 px-3 py-1 rounded-full ml-4 whitespace-nowrap" style={{backgroundColor: '#FEF3C7'}}>Scaling Sprint</div>
+          </div>
+          <div className="border-t ccs-border pt-4 flex items-center justify-between">
+            <div className="text-xs ccs-slate">
+              {!data.released ? 'Waiting for instructor to release.' : `${completedCount} of ${data.teams.length} teams complete`}
+            </div>
+            {!data.released ? (
+              <button disabled className="px-5 py-2.5 rounded text-sm font-medium bg-slate-200 ccs-slate cursor-not-allowed">Locked</button>
+            ) : team.completed ? (
+              <button onClick={onReviewDebrief} className="px-5 py-2.5 rounded text-sm font-medium bg-white ccs-navy border ccs-border hover:bg-slate-50">Review Debrief</button>
+            ) : (
+              <button onClick={onBegin} className="px-5 py-2.5 rounded text-sm font-medium ccs-navy-bg ccs-hover-navy text-white">Begin the Sprint</button>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 text-xs ccs-slate">
+          Backend: {window.storage._hasSharedBackend ? 'Google Sheets (shared across teams)' : 'Local browser only — no shared leaderboard'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// BRIEF SCREEN
+// ═══════════════════════════════════════════════════════════════════
+function BriefScreen({ team, onContinue, onBack }) {
+  return (
+    <div className="min-h-screen ccs-cream">
+      <header className="border-b ccs-border bg-white">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div>
+            <div className="text-xs uppercase tracking-widest ccs-slate font-medium">Case 0 · Scaling Sprint</div>
+            <div className="font-display text-xl ccs-navy" style={{fontWeight: 500}}>Case Brief</div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs ccs-slate uppercase tracking-wider">{team.code}</div>
+            <div className="text-sm ccs-navy font-medium">{team.firmName}</div>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-3xl mx-auto px-6 py-10 fade-up">
+        <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-2">The Situation</div>
+        <h1 className="font-display text-3xl ccs-navy mb-4" style={{fontWeight: 500}}>Priya just signed three co-ops.</h1>
+        <div className="ccs-card p-6 mb-6">
+          <p className="text-sm ccs-navy leading-relaxed mb-3">It's Tuesday morning at Hoofprint Insights. Yesterday, CEO Priya Nair signed contracts with the company's three largest clients to date — three regional agricultural cooperatives representing a combined <strong>400 member farms</strong> across southern Minnesota and Iowa. The contracts go live in <strong>45 days</strong>.</p>
+          <p className="text-sm ccs-navy leading-relaxed mb-3">The problem: Hoofprint's current onboarding process was designed for one client at a time. It takes three to four weeks per client. At current capacity, onboarding three large co-ops simultaneously would consume every available hour of every person on the 15-person staff for the next two months — leaving no bandwidth for existing clients, product work, or sales.</p>
+          <p className="text-sm ccs-navy leading-relaxed italic">Priya's directive: "We need to cut onboarding time by at least 40% without adding headcount. Figure out where AI can help and come back to me with a plan by Friday."</p>
+        </div>
+
+        <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Your Constraints</div>
+        <div className="ccs-card p-6 mb-6 text-sm ccs-navy leading-relaxed">
+          {CASE_0.constraint}
+        </div>
+
+        <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Your Task</div>
+        <div className="ccs-card p-6 mb-8 text-sm ccs-navy leading-relaxed">
+          {CASE_0.task}
+        </div>
+
+        <div className="flex items-center justify-between">
+          <button onClick={onBack} className="text-sm ccs-slate hover:ccs-navy">← Back to dashboard</button>
+          <button onClick={onContinue} className="px-6 py-3 rounded ccs-navy-bg ccs-hover-navy text-white font-medium text-sm">Begin the 5 decisions →</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DECISIONS SCREEN — all 5 on one page
+// ═══════════════════════════════════════════════════════════════════
+function DecisionsScreen({ team, picks, setPicks, onSubmit, onBack }) {
+  const allAnswered = CASE_0.decisions.every(d => picks[d.key]);
+  function pick(decKey, optId) { setPicks({ ...picks, [decKey]: optId }); }
+
+  return (
+    <div className="min-h-screen ccs-cream">
+      <header className="border-b ccs-border bg-white sticky top-0 z-10">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div>
+            <div className="text-xs uppercase tracking-widest ccs-slate font-medium">Case 0 · Scaling Sprint</div>
+            <div className="font-display text-xl ccs-navy" style={{fontWeight: 500}}>The 5 Onboarding Decisions</div>
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="text-sm ccs-slate tabular">{Object.keys(picks).length} of 5 answered</div>
+            <div className="text-right">
+              <div className="text-xs ccs-slate uppercase tracking-wider">{team.code}</div>
+              <div className="text-sm ccs-navy font-medium">{team.firmName}</div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-4xl mx-auto px-6 py-10 fade-up">
+        <p className="text-sm ccs-slate mb-8">Pick one option per decision. There are no obviously-right answers; every option has a real trade-off. Your picks will be compared against your team's AI policy in the debrief.</p>
+
+        {CASE_0.decisions.map((dec, idx) => (
+          <div key={dec.key} className="mb-10">
+            <div className="flex items-baseline gap-3 mb-1">
+              <div className="font-display text-2xl ccs-navy" style={{fontWeight: 500}}>Task {dec.taskNumber}</div>
+              <div className="text-sm uppercase tracking-wider ccs-slate font-medium">{dec.label.replace(`Task ${dec.taskNumber} — `, '')}</div>
+            </div>
+            <p className="text-sm ccs-navy mb-4">{dec.prompt}</p>
+            <div className="space-y-3">
+              {dec.options.map(opt => (
+                <div key={opt.id}
+                  onClick={() => pick(dec.key, opt.id)}
+                  className={`ccs-opt ${picks[dec.key] === opt.id ? 'selected' : ''}`}>
+                  <div className="opt-label">{opt.label}</div>
+                  <div className="opt-summary">{opt.summary}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div className="flex items-center justify-between mt-10 pt-6 border-t ccs-border">
+          <button onClick={onBack} className="text-sm ccs-slate hover:ccs-navy">← Brief</button>
+          <button onClick={onSubmit} disabled={!allAnswered}
+            className={`px-6 py-3 rounded font-medium text-sm ${allAnswered ? 'ccs-navy-bg ccs-hover-navy text-white' : 'bg-slate-200 ccs-slate cursor-not-allowed'}`}>
+            {allAnswered ? 'Submit & see Policy Fidelity →' : `Pick all 5 to submit (${5 - Object.keys(picks).length} left)`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DEBRIEF — Policy Fidelity readout
+// ═══════════════════════════════════════════════════════════════════
+function DebriefScreen({ team, onBackToDashboard }) {
+  const fidelity = computePolicyFidelity(team.code, team.picks);
+  if (!fidelity) {
+    return <div className="min-h-screen flex items-center justify-center ccs-cream">
+      <div className="ccs-card p-8">No policy on file for this team.</div>
+    </div>;
+  }
+  const { honored, total, violated, details, policy } = fidelity;
+  const fidelityPct = Math.round((honored / total) * 100);
+  const scoreTone = fidelityPct >= 80 ? 'ccs-emerald' : fidelityPct >= 50 ? 'ccs-amber' : 'ccs-red';
+
+  const violationLabel = {
+    creation_data: 'Creation (data you said never goes into AI)',
+    creation_human: 'Creation (task you said stays 100% human)',
+    transparency: 'Transparency (disclosure you require was bypassed)',
+    deployment: 'Deployment (named checker was bypassed)'
+  };
+
+  return (
+    <div className="min-h-screen ccs-cream">
+      <header className="border-b ccs-border bg-white">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div>
+            <div className="text-xs uppercase tracking-widest ccs-slate font-medium">Case 0 · Scaling Sprint · Debrief</div>
+            <div className="font-display text-xl ccs-navy" style={{fontWeight: 500}}>Policy Fidelity</div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs ccs-slate uppercase tracking-wider">{team.code}</div>
+            <div className="text-sm ccs-navy font-medium">{team.firmName}</div>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-4xl mx-auto px-6 py-10 fade-up">
+        {policy.policyPending && (
+          <div className="ccs-card p-4 mb-6" style={{backgroundColor: '#FEF3C7', borderColor: '#B45309'}}>
+            <div className="text-sm ccs-navy"><strong>Note:</strong> Your team's S5 Policy Share-Out hasn't been submitted yet. This fidelity check uses your 4D Charter rules only. Submit your policy for a sharper reading.</div>
+          </div>
+        )}
+
+        <div className="mb-10 text-center">
+          <div className="text-xs uppercase tracking-widest ccs-slate font-medium mb-3">Of your 5 decisions, you honored your written policy on</div>
+          <div className={`font-display text-7xl ${scoreTone} tabular mb-2`} style={{fontWeight: 500}}>{honored} <span className="text-3xl ccs-slate">/ {total}</span></div>
+          <div className={`text-sm ${scoreTone} font-medium`}>{fidelityPct}% fidelity</div>
+        </div>
+
+        <div className="mb-10">
+          <h3 className="font-display text-xl ccs-navy mb-4" style={{fontWeight: 500}}>Decision by decision</h3>
+          <div className="space-y-3">
+            {details.map(r => (
+              <div key={r.decisionKey} className="ccs-card p-4">
+                <div className="flex items-start gap-3">
+                  <div className={`mt-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white ${r.honored ? 'ccs-emerald-bg' : 'ccs-red-bg'}`}>
+                    {r.honored ? '✓' : '✗'}
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">{r.taskLabel}</div>
+                    <div className="text-sm ccs-navy font-medium mb-1">You picked: {r.pickedLabel}</div>
+                    {r.honored ? (
+                      <div className="text-sm ccs-emerald">Consistent with your policy.</div>
+                    ) : (
+                      <div className="text-sm ccs-red">
+                        <strong>Violates:</strong> {r.violations.map(v => violationLabel[v] || v).join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mb-10">
+          <h3 className="font-display text-xl ccs-navy mb-4" style={{fontWeight: 500}}>Your team's written policy (from Session 5)</h3>
+          <div className="ccs-card p-6 space-y-3 text-sm">
+            <div><span className="font-medium ccs-navy">Creation:</span> <span className="ccs-slate">{policy.rules.creation}</span></div>
+            <div><span className="font-medium ccs-navy">Transparency:</span> <span className="ccs-slate">{policy.rules.transparency}</span></div>
+            <div><span className="font-medium ccs-navy">Deployment:</span> <span className="ccs-slate">{policy.rules.deployment}</span></div>
+            <div><span className="font-medium ccs-navy">Diligence:</span> <span className="ccs-slate">{policy.rules.diligence}</span></div>
+            <div className="pt-3 border-t ccs-border">
+              <div><span className="font-medium ccs-navy">Named checker:</span> <span className="ccs-slate">{policy.namedChecker}</span></div>
+              <div className="mt-1"><span className="font-medium ccs-navy">Client disclosure:</span> <span className="ccs-slate italic">{policy.disclosureText}</span></div>
+              <div className="mt-1"><span className="font-medium ccs-navy">Strongest rule:</span> <span className="ccs-slate">{policy.strongestRule}</span></div>
+            </div>
+          </div>
+        </div>
+
+        {policy.whereDisagreed && !policy.whereDisagreed.startsWith('No ') && !policy.whereDisagreed.startsWith('(TBD') && (
+          <div className="mb-10">
+            <div className="ccs-card p-6" style={{backgroundColor: '#F0E6D2'}}>
+              <div className="text-xs uppercase tracking-wider ccs-amber font-semibold mb-2">Where your team flagged a tension in share-out</div>
+              <p className="text-sm ccs-navy italic">"{policy.whereDisagreed}"</p>
+              <p className="text-xs ccs-slate mt-2">Did your choices today reflect how that tension actually plays out under pressure?</p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between pt-6 border-t ccs-border">
+          <button onClick={onBackToDashboard} className="text-sm ccs-slate hover:ccs-navy">← Dashboard</button>
+          <div className="text-xs ccs-slate">Case 0 complete. Cases 1-3 will unlock when the instructor releases them.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN CONSOLE
+// ═══════════════════════════════════════════════════════════════════
+function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll, onLoginTry }) {
+  const [pw, setPw] = useState('');
+  const [auth, setAuth] = useState(false);
+  const [err, setErr] = useState('');
+
+  if (!auth) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 ccs-cream">
+        <div className="font-body text-xs uppercase tracking-widest ccs-slate mb-3">Instructor</div>
+        <h1 className="font-display text-3xl ccs-navy mb-6" style={{fontWeight: 500}}>Admin Console</h1>
+        <div className="ccs-card-elevated p-6 w-full max-w-sm">
+          <label className="block text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Password</label>
+          <input type="password" className="ccs-input mb-4" value={pw}
+            onChange={e => setPw(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && (pw === ADMIN_PASSWORD ? setAuth(true) : setErr('Incorrect.'))} />
+          {err && <div className="ccs-red text-sm mb-3">{err}</div>}
+          <button onClick={() => pw === ADMIN_PASSWORD ? setAuth(true) : setErr('Incorrect.')}
+            className="w-full ccs-navy-bg ccs-hover-navy text-white font-medium rounded px-5 py-3 text-sm">Enter</button>
+          <button onClick={onLogout} className="w-full mt-3 ccs-slate text-xs uppercase tracking-widest hover:ccs-navy">Back to team login</button>
+        </div>
+      </div>
+    );
+  }
+
+  const completed = data.teams.filter(t => t.completed);
+  const notStarted = data.teams.filter(t => !t.completed && Object.keys(t.picks || {}).length === 0);
+  const inProgress = data.teams.filter(t => !t.completed && Object.keys(t.picks || {}).length > 0);
+
+  return (
+    <div className="min-h-screen ccs-cream">
+      <header className="border-b ccs-border bg-white">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div>
+            <div className="text-xs uppercase tracking-widest ccs-slate font-medium">MGMT 459 · Instructor</div>
+            <div className="font-display text-xl ccs-navy" style={{fontWeight: 500}}>Scaling Sprint — Admin</div>
+          </div>
+          <button onClick={onLogout} className="text-xs ccs-slate uppercase tracking-widest hover:ccs-navy">Log Out</button>
+        </div>
+      </header>
+
+      <div className="max-w-5xl mx-auto px-6 py-10 fade-up space-y-8">
+        <div className="ccs-card-elevated p-6">
+          <h2 className="font-display text-2xl ccs-navy mb-1" style={{fontWeight: 500}}>Release the Scaling Sprint</h2>
+          <p className="text-sm ccs-slate mb-4">Teams see "Locked" on their dashboard until released. Once released, they can log in and complete Case 0 immediately.</p>
+          <div className="flex items-center gap-4">
+            <div className={`px-4 py-2 rounded text-sm font-medium ${data.released ? 'ccs-emerald-bg text-white' : 'bg-slate-200 ccs-slate'}`}>
+              {data.released ? 'RELEASED' : 'LOCKED'}
+            </div>
+            <button onClick={onReleaseToggle}
+              className={`px-5 py-2.5 rounded text-sm font-medium ${data.released ? 'bg-white ccs-navy border ccs-border hover:bg-slate-50' : 'ccs-emerald-bg ccs-hover-emerald text-white'}`}>
+              {data.released ? 'Lock the Sprint' : 'Release the Sprint'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div className="ccs-card p-5">
+            <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Completed</div>
+            <div className="font-display text-3xl ccs-navy tabular" style={{fontWeight: 500}}>{completed.length}</div>
+            <div className="text-xs ccs-slate">of {data.teams.length} teams</div>
+          </div>
+          <div className="ccs-card p-5">
+            <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-2">In Progress</div>
+            <div className="font-display text-3xl ccs-amber tabular" style={{fontWeight: 500}}>{inProgress.length}</div>
+            <div className="text-xs ccs-slate">started but not submitted</div>
+          </div>
+          <div className="ccs-card p-5">
+            <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Not Started</div>
+            <div className="font-display text-3xl ccs-slate tabular" style={{fontWeight: 500}}>{notStarted.length}</div>
+            <div className="text-xs ccs-slate">haven't opened Case 0</div>
+          </div>
+        </div>
+
+        <div className="ccs-card-elevated p-6">
+          <h3 className="font-display text-xl ccs-navy mb-4" style={{fontWeight: 500}}>Team Status</h3>
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs uppercase tracking-wider ccs-slate border-b ccs-border">
+                <th className="text-left pb-2 font-medium">Code</th>
+                <th className="text-left pb-2 font-medium">Firm</th>
+                <th className="text-left pb-2 font-medium">Status</th>
+                <th className="text-right pb-2 font-medium">Fidelity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.teams.map(t => {
+                const picksCount = Object.keys(t.picks || {}).length;
+                const fid = t.completed ? computePolicyFidelity(t.code, t.picks) : null;
+                return (
+                  <tr key={t.code} className="border-b ccs-border">
+                    <td className="py-3 tabular ccs-navy font-medium">{t.code}</td>
+                    <td className="py-3 ccs-navy">{t.firmName || TEAM_POLICIES[t.code]?.firm || '—'}</td>
+                    <td className="py-3">
+                      {t.completed ? <span className="ccs-emerald text-xs font-semibold uppercase tracking-wider">Complete</span> :
+                       picksCount > 0 ? <span className="ccs-amber text-xs font-semibold uppercase tracking-wider">In progress ({picksCount}/5)</span> :
+                       <span className="ccs-slate text-xs uppercase tracking-wider">Not started</span>}
+                    </td>
+                    <td className="py-3 text-right">
+                      {fid ? <span className={`font-medium tabular ${fid.honored === fid.total ? 'ccs-emerald' : fid.honored >= fid.total/2 ? 'ccs-amber' : 'ccs-red'}`}>{fid.honored}/{fid.total}</span> : <span className="ccs-slate">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          </div>
+        </div>
+
+        <div className="ccs-card p-6 border-l-4" style={{borderLeftColor: '#B91C1C'}}>
+          <div className="text-xs uppercase tracking-wider ccs-red font-semibold mb-2">Reset</div>
+          <p className="text-sm ccs-slate mb-3">Wipes all team picks and completion status. Use between class sections.</p>
+          <button onClick={() => { if (confirm('Reset all Scaling Sprint data for all teams?')) onResetAll(); }}
+            className="px-4 py-2 rounded text-sm font-medium bg-white ccs-red border" style={{borderColor: '#B91C1C'}}>Reset All Data</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════════════════════════════
+function App() {
+  const [data, setData] = useState(null);
+  const [view, setView] = useState('login');  // login | admin | dashboard | brief | decisions | debrief
+  const [team, setTeam] = useState(null);
+  const [picks, setPicks] = useState({});
+
+  useEffect(() => { boot(); }, []);
+
+  async function boot() {
+    const d = await loadData();
+    if (d) setData(d);
+    else { const fresh = createInitialState(); await saveData(fresh); setData(fresh); }
+    const boot = document.getElementById('boot'); if (boot) { boot.classList.add('hidden'); setTimeout(() => boot.remove(), 400); }
+    // Poll
+    setInterval(async () => {
+      const latest = await loadData();
+      if (latest) setData(cur => JSON.stringify(cur) === JSON.stringify(latest) ? cur : latest);
+    }, (window.CCS_CONFIG && window.CCS_CONFIG.POLL_SECONDS || 10) * 1000);
+  }
+
+  if (!data) return <div />;
+
+  async function handleLogin(code, firmName) {
+    const t = data.teams.find(x => x.code === code);
+    if (!t) return;
+    const updatedTeam = { ...t, firmName };
+    const newData = { ...data, teams: data.teams.map(x => x.code === code ? updatedTeam : x) };
+    await saveData(newData); setData(newData);
+    setTeam(updatedTeam);
+    setPicks(updatedTeam.picks || {});
+    setView('dashboard');
+  }
+
+  async function handleReleaseToggle() {
+    const newData = { ...data, released: !data.released };
+    await saveData(newData); setData(newData);
+  }
+  async function handleResetAll() {
+    const fresh = createInitialState();
+    await saveData(fresh); setData(fresh);
+  }
+  async function handleSubmit() {
+    const newTeam = { ...team, picks, completed: true, completedAt: new Date().toISOString() };
+    const newData = { ...data, teams: data.teams.map(x => x.code === team.code ? newTeam : x) };
+    await saveData(newData); setData(newData); setTeam(newTeam);
+    setView('debrief');
+  }
+
+  function logout() { setTeam(null); setPicks({}); setView('login'); }
+
+  return (
+    <React.Fragment>
+      <StyleInjection />
+      {view === 'login' && <LoginScreen onLogin={handleLogin} onAdmin={() => setView('admin')} />}
+      {view === 'admin' && <AdminScreen data={data} onReleaseToggle={handleReleaseToggle} onLogout={logout} onResetAll={handleResetAll} />}
+      {view === 'dashboard' && team && <Dashboard data={data} team={team}
+        onBegin={() => setView('brief')}
+        onReviewDebrief={() => setView('debrief')}
+        onLogout={logout} />}
+      {view === 'brief' && team && <BriefScreen team={team}
+        onContinue={() => setView('decisions')}
+        onBack={() => setView('dashboard')} />}
+      {view === 'decisions' && team && <DecisionsScreen team={team} picks={picks} setPicks={setPicks}
+        onSubmit={handleSubmit}
+        onBack={() => setView('brief')} />}
+      {view === 'debrief' && team && <DebriefScreen team={team}
+        onBackToDashboard={() => setView('dashboard')} />}
+    </React.Fragment>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+</body>
+</html>
