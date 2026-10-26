@@ -254,17 +254,16 @@ const TEAM_POLICIES = {
     }
   },
   '9024': { firm: 'Apex Minds',
-    dataNeverIntoAI: ['client_data','sensitive_data'], humanOnlyTasks: [],
-    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: '(TBD — policy pending)',
-    disclosureText: '(TBD — team to specify in S5 share-out)',
-    strongestRule: '(TBD — team policy pending submission)',
-    whereDisagreed: '(TBD — team policy pending submission)',
-    policyPending: true,
+    dataNeverIntoAI: ['client_data','sensitive_data','financial_data'], humanOnlyTasks: [],
+    disclosureRequired: true, deploymentCheckerBypassAllowed: false, namedChecker: 'Entire team — everyone reviews their own AI use',
+    disclosureText: '"AI use in work and solutions." (plus always informing investors before and after work is completed)',
+    strongestRule: 'Each person documents their AI use and source-checks every piece of information AI gives them.',
+    whereDisagreed: 'No disagreement — team was unified.',
     rules: {
-      creation: "Never put personal information into AI; basic numbers and metrics OK.",
-      transparency: "Disclose AI usage to clients early for trust.",
-      deployment: "Double-check facts and sources before use.",
-      diligence: "Everyone is liable; group effort."
+      creation: "Personal account info (SSN, banking, credit) never goes into AI. Human input is required when handling personal information; AI never sees it.",
+      transparency: "Disclose AI use in work and solutions to clients; always inform investors before and after work is completed.",
+      deployment: "Everyone on the team reviews and source-checks their own AI use for the work they did.",
+      diligence: "Take accountability with the customer when errors occur and correct them right away."
     }
   },
   '1497': { firm: 'Vikings Consulting Group',
@@ -454,7 +453,7 @@ function LoginScreen({ onLogin, onAdmin }) {
     <div className="min-h-screen flex flex-col items-center justify-center p-6 ccs-cream">
       <div className="font-body text-xs uppercase tracking-widest ccs-slate mb-3">MGMT 459 · Session 7</div>
       <h1 className="font-display text-5xl ccs-navy mb-1" style={{fontWeight: 500}}>The Scaling Sprint</h1>
-      <p className="ccs-slate text-sm mb-10">A test of the Consulting Case Simulator.</p>
+      <p className="ccs-slate text-sm mb-10">A soft launch of the Consulting Case Simulator. Teaches the UI; nothing scores.</p>
       <div className="ccs-card-elevated p-6 w-full max-w-md fade-up">
         <label className="block text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Team Code</label>
         <input className="ccs-input mb-4 tabular text-center text-lg" placeholder="4-digit code"
@@ -753,10 +752,12 @@ function DebriefScreen({ team, onBackToDashboard }) {
 // ═══════════════════════════════════════════════════════════════════
 // ADMIN CONSOLE
 // ═══════════════════════════════════════════════════════════════════
-function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll, onLoginTry }) {
+function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll }) {
   const [pw, setPw] = useState('');
   const [auth, setAuth] = useState(false);
   const [err, setErr] = useState('');
+  const [tab, setTab] = useState('status');
+  const [expanded, setExpanded] = useState({});
 
   if (!auth) {
     return (
@@ -781,19 +782,43 @@ function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll, onLoginTry }
   const notStarted = data.teams.filter(t => !t.completed && Object.keys(t.picks || {}).length === 0);
   const inProgress = data.teams.filter(t => !t.completed && Object.keys(t.picks || {}).length > 0);
 
+  function toggleTeam(code) {
+    setExpanded(prev => ({ ...prev, [code]: !prev[code] }));
+  }
+
+  function violationLabel(v) {
+    return v === 'creation_data' ? 'Creation (data)' :
+           v === 'creation_human' ? 'Creation (human-only task)' :
+           v === 'transparency' ? 'Transparency (disclosure bypassed)' :
+           v === 'deployment' ? 'Deployment (checker bypassed)' : v;
+  }
+
   return (
     <div className="min-h-screen ccs-cream">
       <header className="border-b ccs-border bg-white">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div>
             <div className="text-xs uppercase tracking-widest ccs-slate font-medium">MGMT 459 · Instructor</div>
             <div className="font-display text-xl ccs-navy" style={{fontWeight: 500}}>Scaling Sprint — Admin</div>
           </div>
           <button onClick={onLogout} className="text-xs ccs-slate uppercase tracking-widest hover:ccs-navy">Log Out</button>
         </div>
+        <div className="max-w-6xl mx-auto px-6 flex gap-6 border-t ccs-border">
+          <button onClick={() => setTab('status')}
+            className={`py-3 text-sm font-medium`}
+            style={{color: tab === 'status' ? '#0F1729' : '#475569', borderBottom: tab === 'status' ? '2px solid #0F1729' : '2px solid transparent'}}>
+            Status & Release
+          </button>
+          <button onClick={() => setTab('cheat')}
+            className={`py-3 text-sm font-medium`}
+            style={{color: tab === 'cheat' ? '#0F1729' : '#475569', borderBottom: tab === 'cheat' ? '2px solid #0F1729' : '2px solid transparent'}}>
+            Instructor Cheat Sheet
+          </button>
+        </div>
       </header>
 
-      <div className="max-w-5xl mx-auto px-6 py-10 fade-up space-y-8">
+      {tab === 'status' && (
+      <div className="max-w-6xl mx-auto px-6 py-10 fade-up space-y-8">
         <div className="ccs-card-elevated p-6">
           <h2 className="font-display text-2xl ccs-navy mb-1" style={{fontWeight: 500}}>Release the Scaling Sprint</h2>
           <p className="text-sm ccs-slate mb-4">Teams see "Locked" on their dashboard until released. Once released, they can log in and complete Case 0 immediately.</p>
@@ -828,6 +853,7 @@ function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll, onLoginTry }
 
         <div className="ccs-card-elevated p-6">
           <h3 className="font-display text-xl ccs-navy mb-4" style={{fontWeight: 500}}>Team Status</h3>
+          <p className="text-xs ccs-slate mb-3">Fidelity now shows a score whenever a team has made all 5 picks — even if they haven't hit the final Submit yet (so you can see draft scores).</p>
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -841,18 +867,24 @@ function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll, onLoginTry }
             <tbody>
               {data.teams.map(t => {
                 const picksCount = Object.keys(t.picks || {}).length;
-                const fid = t.completed ? computePolicyFidelity(t.code, t.picks) : null;
+                // Compute fidelity whenever all 5 picks are made (not just when "completed")
+                const fid = picksCount >= 5 ? computePolicyFidelity(t.code, t.picks) : null;
                 return (
                   <tr key={t.code} className="border-b ccs-border">
                     <td className="py-3 tabular ccs-navy font-medium">{t.code}</td>
                     <td className="py-3 ccs-navy">{t.firmName || TEAM_POLICIES[t.code]?.firm || '—'}</td>
                     <td className="py-3">
                       {t.completed ? <span className="ccs-emerald text-xs font-semibold uppercase tracking-wider">Complete</span> :
+                       picksCount >= 5 ? <span className="ccs-amber text-xs font-semibold uppercase tracking-wider">Picked all · not submitted</span> :
                        picksCount > 0 ? <span className="ccs-amber text-xs font-semibold uppercase tracking-wider">In progress ({picksCount}/5)</span> :
                        <span className="ccs-slate text-xs uppercase tracking-wider">Not started</span>}
                     </td>
                     <td className="py-3 text-right">
-                      {fid ? <span className={`font-medium tabular ${fid.honored === fid.total ? 'ccs-emerald' : fid.honored >= fid.total/2 ? 'ccs-amber' : 'ccs-red'}`}>{fid.honored}/{fid.total}</span> : <span className="ccs-slate">—</span>}
+                      {fid ? (
+                        <span className={`font-medium tabular ${fid.honored === fid.total ? 'ccs-emerald' : fid.honored >= fid.total/2 ? 'ccs-amber' : 'ccs-red'}`}>
+                          {fid.honored}/{fid.total}{!t.completed && <span className="ccs-slate text-xs ml-1">(draft)</span>}
+                        </span>
+                      ) : <span className="ccs-slate">—</span>}
                     </td>
                   </tr>
                 );
@@ -869,6 +901,206 @@ function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll, onLoginTry }
             className="px-4 py-2 rounded text-sm font-medium bg-white ccs-red border" style={{borderColor: '#B91C1C'}}>Reset All Data</button>
         </div>
       </div>
+      )}
+
+      {tab === 'cheat' && (
+      <div className="max-w-6xl mx-auto px-6 py-10 fade-up space-y-6">
+        <div className="ccs-card p-5">
+          <h2 className="font-display text-xl ccs-navy mb-1" style={{fontWeight: 500}}>Instructor Cheat Sheet</h2>
+          <p className="text-sm ccs-slate">Everything the simulator knows about each team — their policy, their picks, and exactly which rule each option touches. Click a team to expand. Use the Case 0 Reference at the top to answer "what would happen if we picked X?"</p>
+        </div>
+
+        {/* CASE 0 REFERENCE */}
+        <details className="ccs-card-elevated p-5">
+          <summary className="cursor-pointer font-display text-lg ccs-navy font-medium" style={{fontWeight: 500}}>Case 0 Reference — all 5 decisions × 4 options with system tags</summary>
+          <div className="mt-4 space-y-5">
+            {CASE_0.decisions.map(dec => (
+              <div key={dec.key}>
+                <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">Task {dec.taskNumber}</div>
+                <div className="font-medium ccs-navy mb-2">{dec.label.replace(`Task ${dec.taskNumber} — `, '')}</div>
+                <div className="text-xs ccs-slate italic mb-3">{dec.prompt}</div>
+                <div className="space-y-2">
+                  {dec.options.map(opt => (
+                    <div key={opt.id} className="ccs-card p-3">
+                      <div className="flex items-start justify-between gap-3 mb-1">
+                        <div className="text-sm font-medium ccs-navy flex-1">{opt.label}</div>
+                        <div className="text-xs ccs-slate tabular whitespace-nowrap font-mono">{opt.id}</div>
+                      </div>
+                      <div className="text-xs ccs-slate mb-2">{opt.summary}</div>
+                      <div className="flex flex-wrap gap-1 text-xs">
+                        {opt.policyTouches.length === 0 ? (
+                          <span className="px-2 py-0.5 rounded bg-slate-100 ccs-slate">no policy touches — "safe" baseline</span>
+                        ) : opt.policyTouches.map(t => (
+                          <span key={t} className="px-2 py-0.5 rounded font-medium" style={{backgroundColor:'#FEF3C7', color:'#B45309'}}>{t}</span>
+                        ))}
+                        {opt.dataExposed && opt.dataExposed.map(d => (
+                          <span key={'d'+d} className="px-2 py-0.5 rounded font-mono" style={{backgroundColor:'#FEE2E2', color:'#B91C1C'}}>data: {d}</span>
+                        ))}
+                        {opt.humanTaskUsed && opt.humanTaskUsed.map(h => (
+                          <span key={'h'+h} className="px-2 py-0.5 rounded font-mono" style={{backgroundColor:'#FEE2E2', color:'#B91C1C'}}>task: {h}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+
+        {/* PER-TEAM CARDS */}
+        {data.teams.map(t => {
+          const policy = TEAM_POLICIES[t.code];
+          const picksCount = Object.keys(t.picks || {}).length;
+          const fid = picksCount >= 5 ? computePolicyFidelity(t.code, t.picks) : null;
+          const isExpanded = expanded[t.code];
+          const status = t.completed ? 'Complete' : picksCount >= 5 ? 'Picked all · not submitted' : picksCount > 0 ? `In progress (${picksCount}/5)` : 'Not started';
+          const statusColor = t.completed ? 'ccs-emerald' : picksCount >= 5 ? 'ccs-amber' : picksCount > 0 ? 'ccs-amber' : 'ccs-slate';
+
+          return (
+            <div key={t.code} className="ccs-card-elevated">
+              <div onClick={() => toggleTeam(t.code)} className="p-5 cursor-pointer hover:bg-slate-50 flex items-center gap-4">
+                <div className="ccs-slate font-mono text-lg">{isExpanded ? '▼' : '▶'}</div>
+                <div className="w-16 tabular ccs-navy font-medium">{t.code}</div>
+                <div className="flex-1">
+                  <div className="font-display text-lg ccs-navy" style={{fontWeight: 500}}>{t.firmName || policy?.firm}</div>
+                  <div className="text-xs ccs-slate">{policy?.firm && t.firmName && t.firmName !== policy.firm ? `(logged in as "${t.firmName}")` : ''}</div>
+                </div>
+                <div className={`text-xs font-semibold uppercase tracking-wider ${statusColor}`}>{status}</div>
+                {fid && (
+                  <div className={`font-display text-xl tabular ${fid.honored === fid.total ? 'ccs-emerald' : fid.honored >= fid.total/2 ? 'ccs-amber' : 'ccs-red'}`} style={{fontWeight: 500}}>
+                    {fid.honored}/{fid.total}
+                  </div>
+                )}
+              </div>
+
+              {isExpanded && policy && (
+                <div className="border-t ccs-border p-5 space-y-5">
+
+                  {/* Policy variables block */}
+                  <div>
+                    <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-2">What the simulator reads for this team</div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="ccs-card p-3">
+                        <div className="text-xs ccs-slate mb-1">dataNeverIntoAI</div>
+                        <div className="font-mono text-sm ccs-navy">
+                          {policy.dataNeverIntoAI.length > 0 ? policy.dataNeverIntoAI.join(', ') : '(empty)'}
+                        </div>
+                      </div>
+                      <div className="ccs-card p-3">
+                        <div className="text-xs ccs-slate mb-1">humanOnlyTasks</div>
+                        <div className="font-mono text-sm ccs-navy">
+                          {policy.humanOnlyTasks.length > 0 ? policy.humanOnlyTasks.join(', ') : '(empty)'}
+                        </div>
+                      </div>
+                      <div className="ccs-card p-3">
+                        <div className="text-xs ccs-slate mb-1">disclosureRequired</div>
+                        <div className="font-mono text-sm ccs-navy">{String(policy.disclosureRequired)}</div>
+                      </div>
+                      <div className="ccs-card p-3">
+                        <div className="text-xs ccs-slate mb-1">namedChecker</div>
+                        <div className="text-sm ccs-navy">{policy.namedChecker}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4D rules */}
+                  <div>
+                    <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Their 4D rules (verbatim from S5)</div>
+                    <div className="space-y-1 text-sm">
+                      <div><span className="ccs-navy font-medium">Creation:</span> <span className="ccs-slate">{policy.rules.creation}</span></div>
+                      <div><span className="ccs-navy font-medium">Transparency:</span> <span className="ccs-slate">{policy.rules.transparency}</span></div>
+                      <div><span className="ccs-navy font-medium">Deployment:</span> <span className="ccs-slate">{policy.rules.deployment}</span></div>
+                      <div><span className="ccs-navy font-medium">Diligence:</span> <span className="ccs-slate">{policy.rules.diligence}</span></div>
+                    </div>
+                  </div>
+
+                  {/* Picks + verdicts */}
+                  {picksCount > 0 && (
+                    <div>
+                      <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-2">
+                        Their picks ({picksCount}/5) {t.completed ? '· submitted' : '· DRAFT (submit not pressed)'}
+                      </div>
+                      <div className="space-y-2">
+                        {CASE_0.decisions.map(dec => {
+                          const pickId = (t.picks || {})[dec.key];
+                          const opt = pickId ? dec.options.find(o => o.id === pickId) : null;
+                          if (!opt) {
+                            return (
+                              <div key={dec.key} className="ccs-card p-3 flex items-center gap-3">
+                                <div className="text-xs ccs-slate font-medium w-14">Task {dec.taskNumber}</div>
+                                <div className="flex-1 text-sm ccs-slate italic">(not picked yet)</div>
+                              </div>
+                            );
+                          }
+                          // Compute violations for this specific pick
+                          const violations = [];
+                          if (opt.policyTouches.includes('creation')) {
+                            const dataExposed = opt.dataExposed || [];
+                            const humanUsed = opt.humanTaskUsed || [];
+                            if (dataExposed.some(d => policy.dataNeverIntoAI.includes(d))) violations.push('creation_data');
+                            if (humanUsed.some(h => policy.humanOnlyTasks.includes(h))) violations.push('creation_human');
+                          }
+                          if (opt.policyTouches.includes('transparency') && policy.disclosureRequired) {
+                            const bypassIds = ['ai_full_auto','ai_spot_check','ai_auto_email','ai_full_resolve','ai_auto_deploy','ai_module'];
+                            if (bypassIds.includes(opt.id)) violations.push('transparency');
+                          }
+                          if (opt.policyTouches.includes('deployment') && !policy.deploymentCheckerBypassAllowed) {
+                            const bypassIds = ['ai_full_auto','ai_spot_check','ai_auto_email','ai_full_resolve','ai_auto_deploy','ai_module'];
+                            if (bypassIds.includes(opt.id)) violations.push('deployment');
+                          }
+                          const honored = violations.length === 0;
+                          return (
+                            <div key={dec.key} className="ccs-card p-3">
+                              <div className="flex items-start gap-3">
+                                <div className="text-xs ccs-slate font-medium w-14 pt-0.5">Task {dec.taskNumber}</div>
+                                <div className="flex-1">
+                                  <div className="text-sm ccs-navy font-medium">{opt.label}</div>
+                                  <div className="text-xs ccs-slate font-mono mt-1">{opt.id}</div>
+                                </div>
+                                <div className={`text-xs font-semibold uppercase tracking-wider whitespace-nowrap ${honored ? 'ccs-emerald' : 'ccs-red'}`}>
+                                  {honored ? '✓ honored' : '✗ violates'}
+                                </div>
+                              </div>
+                              {!honored && (
+                                <div className="mt-2 pl-14 text-xs ccs-red">
+                                  Rules violated: {violations.map(v => violationLabel(v)).join(' · ')}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {t.completedAt && (
+                        <div className="text-xs ccs-slate mt-2">Submitted: {new Date(t.completedAt).toLocaleString()}</div>
+                      )}
+                    </div>
+                  )}
+
+                  {picksCount === 0 && (
+                    <div className="ccs-card p-3 text-sm ccs-slate italic">This team hasn't started yet.</div>
+                  )}
+
+                  {/* Reference context */}
+                  <div className="text-xs ccs-slate pt-3 border-t ccs-border space-y-1">
+                    <div><span className="font-medium ccs-navy">Members:</span> {policy.firm === 'Money Talks' ? 'Peter · Alexander · Braedyn · Morgan' : '(see Overview Excel)'}</div>
+                    <div><span className="font-medium ccs-navy">Disclosure text:</span> {policy.disclosureText}</div>
+                    <div><span className="font-medium ccs-navy">Strongest rule:</span> {policy.strongestRule}</div>
+                    {policy.whereDisagreed && <div><span className="font-medium ccs-navy">Where they flagged tension:</span> {policy.whereDisagreed}</div>}
+                  </div>
+                </div>
+              )}
+
+              {isExpanded && !policy && (
+                <div className="border-t ccs-border p-5 text-sm ccs-red">
+                  No policy on file for this code. The simulator can't score fidelity.
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      )}
     </div>
   );
 }
