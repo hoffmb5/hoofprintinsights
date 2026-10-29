@@ -42,7 +42,7 @@
      ==================================================================== -->
 <script>
   window.CCS_CONFIG = {
-    SHEETS_URL: 'https://script.google.com/macros/s/AKfycbxrNINUJwPzVCwdi2FpFuELlIxireC5kjS_7s3sLhJNZujhF84lg8E8QFLlL6EMzSHXAg/exec',   // ← PASTE YOUR GOOGLE APPS SCRIPT URL HERE (same as main simulator)
+    SHEETS_URL: ''https://script.google.com/macros/s/AKfycbxrNINUJwPzVCwdi2FpFuELlIxireC5kjS_7s3sLhJNZujhF84lg8E8QFLlL6EMzSHXAg/exec'',   // ← PASTE YOUR GOOGLE APPS SCRIPT URL HERE (same as main simulator)
     POLL_SECONDS: 10,
   };
 </script>
@@ -365,6 +365,9 @@ function getActivePolicy(teamCode, team) {
     dataNeverIntoAI: rev.dataNeverIntoAI,
     humanOnlyTasks: rev.humanOnlyTasks,
     disclosureRequired: rev.disclosureRequired,
+    // Context fields: fall back to baseline if the revision didn't set them
+    namedChecker: (rev.namedChecker != null && rev.namedChecker !== '') ? rev.namedChecker : baseline.namedChecker,
+    disclosureText: (rev.disclosureText != null && rev.disclosureText !== '') ? rev.disclosureText : baseline.disclosureText,
     _hasRevisions: true,
   };
 }
@@ -751,6 +754,8 @@ function RevisePolicyScreen({ team, teamCode, firmNameOverride, isAdmin, onSave,
   const [dataSet, setDataSet] = useState(new Set((existing ? existing.dataNeverIntoAI : baseline.dataNeverIntoAI) || []));
   const [taskSet, setTaskSet] = useState(new Set((existing ? existing.humanOnlyTasks : baseline.humanOnlyTasks) || []));
   const [disclosure, setDisclosure] = useState(existing ? existing.disclosureRequired : baseline.disclosureRequired);
+  const [namedChecker, setNamedChecker] = useState((existing && existing.namedChecker != null) ? existing.namedChecker : baseline.namedChecker || '');
+  const [disclosureText, setDisclosureText] = useState((existing && existing.disclosureText != null) ? existing.disclosureText : baseline.disclosureText || '');
 
   function toggleData(tag) {
     const next = new Set(dataSet);
@@ -777,13 +782,17 @@ function RevisePolicyScreen({ team, teamCode, firmNameOverride, isAdmin, onSave,
   const changedFromBaseline =
     dataSet.size !== baselineData.size || [...dataSet].some(d => !baselineData.has(d)) ||
     taskSet.size !== baselineTask.size || [...taskSet].some(t => !baselineTask.has(t)) ||
-    disclosure !== baseline.disclosureRequired;
+    disclosure !== baseline.disclosureRequired ||
+    namedChecker.trim() !== (baseline.namedChecker || '').trim() ||
+    disclosureText.trim() !== (baseline.disclosureText || '').trim();
 
   function save() {
     onSave({
       dataNeverIntoAI: Array.from(dataSet),
       humanOnlyTasks: Array.from(taskSet),
       disclosureRequired: disclosure,
+      namedChecker: namedChecker.trim(),
+      disclosureText: disclosureText.trim(),
     });
   }
 
@@ -909,6 +918,32 @@ function RevisePolicyScreen({ team, teamCode, firmNameOverride, isAdmin, onSave,
               <div className="font-display text-2xl ccs-navy tabular" style={{fontWeight: 500}}>{impact.deployment}</div>
               <div className="text-xs ccs-slate">option-violations</div>
             </div>
+          </div>
+        </div>
+
+        {/* CONTEXT (optional — doesn't change your score) */}
+        <div className="ccs-card-elevated p-6 mb-6">
+          <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">Context fields <span className="ccs-amber">· optional</span></div>
+          <h2 className="font-display text-xl ccs-navy mb-1" style={{fontWeight: 500}}>Make your policy specific.</h2>
+          <p className="text-xs ccs-slate mb-5">These two fields personalize your debrief and persona card. They don't change your fidelity score — they just make the policy feel like yours.</p>
+
+          <div className="mb-5">
+            <label className="block text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Named checker</label>
+            <p className="text-xs ccs-slate mb-2">Who on your team is responsible for reviewing client-facing output before it ships? Name a person, or say "entire team" if that's your rule.</p>
+            <input className="ccs-input" placeholder="e.g. Morgan · or 'Entire team'"
+              value={namedChecker} onChange={e => setNamedChecker(e.target.value)}
+              maxLength={120} />
+          </div>
+
+          <div>
+            <label className="block text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Our client disclosure — the exact words</label>
+            <p className="text-xs ccs-slate mb-2">If you set Variable 3 to "Yes," this is what you'd actually say to the client. Write the sentence you want attached to AI-assisted output.</p>
+            <textarea className="ccs-input" rows={3}
+              placeholder={`e.g. "This output was AI-assisted and reviewed by [name] before being sent to you."`}
+              value={disclosureText} onChange={e => setDisclosureText(e.target.value)}
+              maxLength={400}
+              style={{resize: 'vertical', minHeight: '72px', fontFamily: 'inherit'}} />
+            <div className="text-xs ccs-slate mt-1 tabular">{disclosureText.length} / 400</div>
           </div>
         </div>
 
