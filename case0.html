@@ -825,47 +825,71 @@ function RevisePolicyScreen({ team, teamCode, firmNameOverride, isAdmin, onSave,
           )}
         </div>
 
-        {/* Variable 1: Data */}
+        {/* Variable 1: Data — one explicit choice per data type */}
         <div className="ccs-card-elevated p-6 mb-5">
-          <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">Variable 1</div>
-          <h2 className="font-display text-xl ccs-navy mb-1" style={{fontWeight: 500}}>Data that NEVER goes into AI</h2>
-          <p className="text-xs ccs-slate mb-4">Check every category your team wants kept out of any AI tool.</p>
-          <div className="space-y-2">
+          <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">Variable 1 · Data policy</div>
+          <h2 className="font-display text-xl ccs-navy mb-1" style={{fontWeight: 500}}>Which data types can AI see?</h2>
+          <p className="text-xs ccs-slate mb-4">For each category below, pick one — <strong>Blocked</strong> (never goes into AI) or <strong>Allowed</strong> (OK for AI to use).</p>
+          <div className="space-y-3">
             {ALL_DATA_TAGS.map(tag => {
               const info = DATA_TAG_LABELS[tag];
-              const checked = dataSet.has(tag);
+              const blocked = dataSet.has(tag);
               return (
-                <label key={tag} className="flex items-start gap-3 p-3 ccs-card cursor-pointer hover:bg-slate-50">
-                  <input type="checkbox" checked={checked} onChange={() => toggleData(tag)}
-                    style={{marginTop: '3px', width: '18px', height: '18px', accentColor: '#0F1729'}} />
-                  <div className="flex-1">
+                <div key={tag} className="p-3 ccs-card">
+                  <div className="mb-2">
                     <div className="text-sm font-medium ccs-navy">{info.label}</div>
                     <div className="text-xs ccs-slate">{info.desc}</div>
                   </div>
-                </label>
+                  <div className="flex gap-3 pl-1">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name={`data_${tag}`} checked={blocked}
+                        onChange={() => { if (!blocked) toggleData(tag); }}
+                        style={{width: '16px', height: '16px', accentColor: '#B91C1C'}} />
+                      <span className={`text-sm font-medium ${blocked ? 'ccs-red' : 'ccs-slate'}`}>🚫 Blocked</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name={`data_${tag}`} checked={!blocked}
+                        onChange={() => { if (blocked) toggleData(tag); }}
+                        style={{width: '16px', height: '16px', accentColor: '#047857'}} />
+                      <span className={`text-sm font-medium ${!blocked ? 'ccs-emerald' : 'ccs-slate'}`}>✓ Allowed</span>
+                    </label>
+                  </div>
+                </div>
               );
             })}
           </div>
         </div>
 
-        {/* Variable 2: Tasks */}
+        {/* Variable 2: Tasks — one explicit choice per task type */}
         <div className="ccs-card-elevated p-6 mb-5">
-          <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">Variable 2</div>
-          <h2 className="font-display text-xl ccs-navy mb-1" style={{fontWeight: 500}}>Tasks that STAY 100% human</h2>
-          <p className="text-xs ccs-slate mb-4">Check every task your team wants humans to do without AI assistance.</p>
-          <div className="space-y-2">
+          <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">Variable 2 · Task delegation</div>
+          <h2 className="font-display text-xl ccs-navy mb-1" style={{fontWeight: 500}}>Which tasks can AI assist with?</h2>
+          <p className="text-xs ccs-slate mb-4">For each task below, pick one — <strong>100% Human</strong> (AI never does this) or <strong>AI can assist</strong> (with human review).</p>
+          <div className="space-y-3">
             {ALL_TASK_TAGS.map(tag => {
               const info = TASK_TAG_LABELS[tag];
-              const checked = taskSet.has(tag);
+              const humanOnly = taskSet.has(tag);
               return (
-                <label key={tag} className="flex items-start gap-3 p-3 ccs-card cursor-pointer hover:bg-slate-50">
-                  <input type="checkbox" checked={checked} onChange={() => toggleTask(tag)}
-                    style={{marginTop: '3px', width: '18px', height: '18px', accentColor: '#0F1729'}} />
-                  <div className="flex-1">
+                <div key={tag} className="p-3 ccs-card">
+                  <div className="mb-2">
                     <div className="text-sm font-medium ccs-navy">{info.label}</div>
                     <div className="text-xs ccs-slate">{info.desc}</div>
                   </div>
-                </label>
+                  <div className="flex gap-3 pl-1">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name={`task_${tag}`} checked={humanOnly}
+                        onChange={() => { if (!humanOnly) toggleTask(tag); }}
+                        style={{width: '16px', height: '16px', accentColor: '#B91C1C'}} />
+                      <span className={`text-sm font-medium ${humanOnly ? 'ccs-red' : 'ccs-slate'}`}>👤 100% Human</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name={`task_${tag}`} checked={!humanOnly}
+                        onChange={() => { if (humanOnly) toggleTask(tag); }}
+                        style={{width: '16px', height: '16px', accentColor: '#047857'}} />
+                      <span className={`text-sm font-medium ${!humanOnly ? 'ccs-emerald' : 'ccs-slate'}`}>✓ AI can assist</span>
+                    </label>
+                  </div>
+                </div>
               );
             })}
           </div>
