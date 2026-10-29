@@ -334,10 +334,71 @@ const TEAM_POLICIES = {
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// POLICY FIDELITY CHECK
+// POLICY TAG LABELS — plain English for the policy editor
 // ═══════════════════════════════════════════════════════════════════
-function computePolicyFidelity(teamCode, picks) {
-  const policy = TEAM_POLICIES[teamCode];
+const DATA_TAG_LABELS = {
+  client_data:    { label: "Client data", desc: "Co-op business info, member lists, farm records, operations" },
+  sensitive_data: { label: "Sensitive data", desc: "Passwords, confidential plans, personal info, legal / HR details" },
+  financial_data: { label: "Financial data", desc: "Revenue, cost, pricing, bank accounts, salaries, financial numbers" },
+  farm_data:      { label: "Farm data", desc: "Individual farm records: yields, animal health, operational logs" },
+  metrics:        { label: "Metrics", desc: "Performance numbers, usage data, dashboard figures" },
+};
+const TASK_TAG_LABELS = {
+  client_email:            { label: "Client email", desc: "Writing / sending email to a client contact" },
+  client_comms:            { label: "Client communications", desc: "Any client-facing comms — calls, messages, docs sent to client" },
+  hr_decisions:            { label: "HR decisions", desc: "Hiring, firing, promotion, performance reviews, discipline" },
+  screening_applications:  { label: "Screening applications", desc: "Resume review, candidate ranking, job application screening" },
+};
+const ALL_DATA_TAGS = Object.keys(DATA_TAG_LABELS);
+const ALL_TASK_TAGS = Object.keys(TASK_TAG_LABELS);
+const BYPASS_OPTION_IDS = ['ai_full_auto','ai_spot_check','ai_auto_email','ai_full_resolve','ai_auto_deploy','ai_module'];
+
+// Returns the ACTIVE policy for a team — merges baseline (TEAM_POLICIES) with
+// any revised fields the team saved in their revisedPolicy snapshot.
+function getActivePolicy(teamCode, team) {
+  const baseline = TEAM_POLICIES[teamCode];
+  if (!baseline) return null;
+  const rev = team && team.revisedPolicy;
+  if (!rev) return baseline;
+  return {
+    ...baseline,
+    dataNeverIntoAI: rev.dataNeverIntoAI,
+    humanOnlyTasks: rev.humanOnlyTasks,
+    disclosureRequired: rev.disclosureRequired,
+    _hasRevisions: true,
+  };
+}
+
+// Preview — given a candidate policy, count how many options across all 5 decisions
+// would violate it, broken down by rule type and distinct decisions affected.
+function previewImpact(policy) {
+  const counts = { creation: 0, transparency: 0, deployment: 0, totalOptions: 0, decisionsAffected: 0 };
+  const affected = new Set();
+  for (const dec of CASE_0.decisions) {
+    for (const opt of dec.options) {
+      let hit = false;
+      if (opt.policyTouches.includes('creation')) {
+        const dataExposed = opt.dataExposed || [];
+        const humanUsed = opt.humanTaskUsed || [];
+        if (dataExposed.some(d => policy.dataNeverIntoAI.includes(d))) { counts.creation++; hit = true; }
+        if (humanUsed.some(h => policy.humanOnlyTasks.includes(h))) { counts.creation++; hit = true; }
+      }
+      if (opt.policyTouches.includes('transparency') && policy.disclosureRequired &&
+          BYPASS_OPTION_IDS.includes(opt.id)) { counts.transparency++; hit = true; }
+      if (opt.policyTouches.includes('deployment') && !policy.deploymentCheckerBypassAllowed &&
+          BYPASS_OPTION_IDS.includes(opt.id)) { counts.deployment++; hit = true; }
+      if (hit) { counts.totalOptions++; affected.add(dec.key); }
+    }
+  }
+  counts.decisionsAffected = affected.size;
+  return counts;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// POLICY FIDELITY CHECK — uses active policy (baseline or revised)
+// ═══════════════════════════════════════════════════════════════════
+function computePolicyFidelity(teamCode, picks, team) {
+  const policy = getActivePolicy(teamCode, team);
   if (!policy) return null;
   const results = [];
   for (const dec of CASE_0.decisions) {
@@ -353,17 +414,15 @@ function computePolicyFidelity(teamCode, picks) {
       if (humanUsed.some(h => policy.humanOnlyTasks.includes(h))) violations.push('creation_human');
     }
     if (opt.policyTouches.includes('transparency') && policy.disclosureRequired) {
-      const bypassIds = ['ai_full_auto','ai_spot_check','ai_auto_email','ai_full_resolve','ai_auto_deploy','ai_module'];
-      if (bypassIds.includes(opt.id)) violations.push('transparency');
+      if (BYPASS_OPTION_IDS.includes(opt.id)) violations.push('transparency');
     }
     if (opt.policyTouches.includes('deployment') && !policy.deploymentCheckerBypassAllowed) {
-      const bypassIds = ['ai_full_auto','ai_spot_check','ai_auto_email','ai_full_resolve','ai_auto_deploy','ai_module'];
-      if (bypassIds.includes(opt.id)) violations.push('deployment');
+      if (BYPASS_OPTION_IDS.includes(opt.id)) violations.push('deployment');
     }
     results.push({ decisionKey: dec.key, taskLabel: dec.label, pickedId: opt.id, pickedLabel: opt.label, honored: violations.length === 0, violations });
   }
   const honored = results.filter(r => r.honored).length;
-  return { total: results.length, honored, violated: results.length - honored, details: results, policy };
+  return { total: results.length, honored, violated: results.length - honored, details: results, policy, hasRevisions: !!policy._hasRevisions };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -373,7 +432,11 @@ function createInitialState() {
   return {
     initialized: true,
     released: false,
-    teams: TEAM_CODES.map((code, i) => ({ id: i + 1, code, firmName: null, picks: {}, completed: false, completedAt: null }))
+    policyEditingUnlocked: false,
+    teams: TEAM_CODES.map((code, i) => ({
+      id: i + 1, code, firmName: null, picks: {}, completed: false, completedAt: null,
+      revisedPolicy: null, revisedAt: null
+    }))
   };
 }
 
@@ -438,15 +501,16 @@ function StyleInjection() {
 // ═══════════════════════════════════════════════════════════════════
 function LoginScreen({ onLogin, onAdmin }) {
   const [code, setCode] = useState('');
-  const [firmName, setFirmName] = useState('');
   const [err, setErr] = useState('');
 
+  const trimmed = code.trim();
+  const isValid = TEAM_CODES.includes(trimmed);
+  const policy = isValid ? TEAM_POLICIES[trimmed] : null;
+  const firmPreview = policy ? policy.firm : null;
+
   function submit() {
-    if (!TEAM_CODES.includes(code.trim())) { setErr('Not a valid team code.'); return; }
-    const policy = TEAM_POLICIES[code.trim()];
-    const name = firmName.trim() || (policy && policy.firm) || '';
-    if (!name) { setErr('Enter your firm name.'); return; }
-    onLogin(code.trim(), name);
+    if (!isValid) { setErr('Not a valid team code.'); return; }
+    onLogin(trimmed, policy.firm);
   }
 
   return (
@@ -456,16 +520,25 @@ function LoginScreen({ onLogin, onAdmin }) {
       <p className="ccs-slate text-sm mb-10">A soft launch of the Consulting Case Simulator. Teaches the UI; nothing scores.</p>
       <div className="ccs-card-elevated p-6 w-full max-w-md fade-up">
         <label className="block text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Team Code</label>
-        <input className="ccs-input mb-4 tabular text-center text-lg" placeholder="4-digit code"
-          value={code} onChange={e => setCode(e.target.value)} maxLength={4}
+        <input className="ccs-input mb-3 tabular text-center text-lg" placeholder="4-digit code"
+          value={code} onChange={e => { setCode(e.target.value); setErr(''); }}
+          maxLength={4} autoFocus
           onKeyDown={e => e.key === 'Enter' && submit()} />
-        <label className="block text-xs uppercase tracking-wider ccs-slate font-medium mb-2">Firm Name</label>
-        <input className="ccs-input mb-4" placeholder="Your team's firm name"
-          value={firmName} onChange={e => setFirmName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && submit()} />
+        {/* Live confirmation of team firm — appears as they type */}
+        {firmPreview && (
+          <div className="mb-4 p-3 rounded text-center fade-up" style={{backgroundColor: '#F0E6D2'}}>
+            <div className="text-xs uppercase tracking-wider font-semibold mb-1" style={{color: '#B45309'}}>Logging in as</div>
+            <div className="font-display text-lg ccs-navy" style={{fontWeight: 500}}>{firmPreview}</div>
+          </div>
+        )}
+        {trimmed.length === 4 && !isValid && (
+          <div className="ccs-red text-sm mb-3 text-center">Not a valid team code.</div>
+        )}
         {err && <div className="ccs-red text-sm mb-3">{err}</div>}
-        <button onClick={submit}
-          className="w-full ccs-navy-bg ccs-hover-navy text-white font-medium rounded px-5 py-3 text-sm">Enter</button>
+        <button onClick={submit} disabled={!isValid}
+          className={`w-full rounded px-5 py-3 text-sm font-medium ${isValid ? 'ccs-navy-bg ccs-hover-navy text-white' : 'bg-slate-200 ccs-slate cursor-not-allowed'}`}>
+          Enter
+        </button>
         <button onClick={onAdmin} className="w-full mt-3 ccs-slate text-xs uppercase tracking-widest hover:ccs-navy">Instructor Access</button>
       </div>
     </div>
@@ -475,8 +548,10 @@ function LoginScreen({ onLogin, onAdmin }) {
 // ═══════════════════════════════════════════════════════════════════
 // DASHBOARD — pre-release & post-complete states
 // ═══════════════════════════════════════════════════════════════════
-function Dashboard({ data, team, onBegin, onLogout, onReviewDebrief }) {
+function Dashboard({ data, team, onBegin, onLogout, onReviewDebrief, onRevisePolicy }) {
   const completedCount = data.teams.filter(t => t.completed).length;
+  const canRevise = data.policyEditingUnlocked;
+  const hasRevised = !!team.revisedPolicy;
   return (
     <div className="min-h-screen ccs-cream">
       <header className="border-b ccs-border bg-white">
@@ -524,6 +599,32 @@ function Dashboard({ data, team, onBegin, onLogout, onReviewDebrief }) {
             )}
           </div>
         </div>
+
+        {canRevise && (
+          <div className="ccs-card-elevated p-6 mt-6" style={{borderLeftWidth: '4px', borderLeftColor: '#B45309'}}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1">
+                <div className="text-xs uppercase tracking-wider ccs-amber font-semibold mb-1">
+                  Policy Editor {hasRevised ? '· You have revisions saved' : '· Open'}
+                </div>
+                <h3 className="font-display text-xl ccs-navy mb-1" style={{fontWeight: 500}}>
+                  {hasRevised ? 'Revise your policy again' : 'Revise your policy'}
+                </h3>
+                <p className="text-sm ccs-slate">
+                  Edit the three variables the simulator reads — directly. Your Session 5 baseline is preserved for the next-class comparison.
+                </p>
+                {hasRevised && team.revisedAt && (
+                  <div className="text-xs ccs-slate mt-2">Last revised: {new Date(team.revisedAt).toLocaleString()}</div>
+                )}
+              </div>
+              <button onClick={onRevisePolicy}
+                className="px-5 py-2.5 rounded text-sm font-medium whitespace-nowrap"
+                style={{backgroundColor: '#B45309', color: 'white'}}>
+                {hasRevised ? 'Edit Again' : 'Open Editor'}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="mt-6 text-xs ccs-slate">
           Backend: {window.storage._hasSharedBackend ? 'Google Sheets (shared across teams)' : 'Local browser only — no shared leaderboard'}
@@ -641,10 +742,193 @@ function DecisionsScreen({ team, picks, setPicks, onSubmit, onBack }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// REVISE POLICY SCREEN — students (or admin on behalf) edit the 3 variables directly
+// ═══════════════════════════════════════════════════════════════════
+function RevisePolicyScreen({ team, teamCode, firmNameOverride, isAdmin, onSave, onCancel }) {
+  const baseline = TEAM_POLICIES[teamCode];
+  const existing = team && team.revisedPolicy;
+  const startFromRevised = !!existing;
+  const [dataSet, setDataSet] = useState(new Set((existing ? existing.dataNeverIntoAI : baseline.dataNeverIntoAI) || []));
+  const [taskSet, setTaskSet] = useState(new Set((existing ? existing.humanOnlyTasks : baseline.humanOnlyTasks) || []));
+  const [disclosure, setDisclosure] = useState(existing ? existing.disclosureRequired : baseline.disclosureRequired);
+
+  function toggleData(tag) {
+    const next = new Set(dataSet);
+    if (next.has(tag)) next.delete(tag); else next.add(tag);
+    setDataSet(next);
+  }
+  function toggleTask(tag) {
+    const next = new Set(taskSet);
+    if (next.has(tag)) next.delete(tag); else next.add(tag);
+    setTaskSet(next);
+  }
+
+  const candidatePolicy = {
+    dataNeverIntoAI: Array.from(dataSet),
+    humanOnlyTasks: Array.from(taskSet),
+    disclosureRequired: disclosure,
+    deploymentCheckerBypassAllowed: false,
+  };
+  const impact = previewImpact(candidatePolicy);
+
+  // Dirty check — any difference from baseline?
+  const baselineData = new Set(baseline.dataNeverIntoAI || []);
+  const baselineTask = new Set(baseline.humanOnlyTasks || []);
+  const changedFromBaseline =
+    dataSet.size !== baselineData.size || [...dataSet].some(d => !baselineData.has(d)) ||
+    taskSet.size !== baselineTask.size || [...taskSet].some(t => !baselineTask.has(t)) ||
+    disclosure !== baseline.disclosureRequired;
+
+  function save() {
+    onSave({
+      dataNeverIntoAI: Array.from(dataSet),
+      humanOnlyTasks: Array.from(taskSet),
+      disclosureRequired: disclosure,
+    });
+  }
+
+  const firmName = firmNameOverride || (team && team.firmName) || baseline.firm;
+
+  return (
+    <div className="min-h-screen ccs-cream">
+      <header className="border-b ccs-border bg-white">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div>
+            <div className="text-xs uppercase tracking-widest ccs-slate font-medium">
+              {isAdmin ? 'Instructor · Editing on behalf of team' : 'Revise Policy'}
+            </div>
+            <div className="font-display text-xl ccs-navy" style={{fontWeight: 500}}>{firmName}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs ccs-slate uppercase tracking-wider">Team {teamCode}</div>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-4xl mx-auto px-6 py-8 fade-up">
+        <div className="mb-6">
+          <h1 className="font-display text-3xl ccs-navy mb-2" style={{fontWeight: 500}}>Edit the three variables the simulator reads.</h1>
+          <p className="text-sm ccs-slate">Check / uncheck what matches your team's intent. The simulator uses THESE exact settings when scoring your Case 0 picks. Your Session 5 baseline is preserved so we can compare before vs after in next class.</p>
+          {startFromRevised && (
+            <div className="mt-3 text-xs ccs-amber font-medium">
+              You've revised before — the fields below show your most recent revision. Change again if you want.
+            </div>
+          )}
+        </div>
+
+        {/* Variable 1: Data */}
+        <div className="ccs-card-elevated p-6 mb-5">
+          <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">Variable 1</div>
+          <h2 className="font-display text-xl ccs-navy mb-1" style={{fontWeight: 500}}>Data that NEVER goes into AI</h2>
+          <p className="text-xs ccs-slate mb-4">Check every category your team wants kept out of any AI tool.</p>
+          <div className="space-y-2">
+            {ALL_DATA_TAGS.map(tag => {
+              const info = DATA_TAG_LABELS[tag];
+              const checked = dataSet.has(tag);
+              return (
+                <label key={tag} className="flex items-start gap-3 p-3 ccs-card cursor-pointer hover:bg-slate-50">
+                  <input type="checkbox" checked={checked} onChange={() => toggleData(tag)}
+                    style={{marginTop: '3px', width: '18px', height: '18px', accentColor: '#0F1729'}} />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium ccs-navy">{info.label}</div>
+                    <div className="text-xs ccs-slate">{info.desc}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Variable 2: Tasks */}
+        <div className="ccs-card-elevated p-6 mb-5">
+          <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">Variable 2</div>
+          <h2 className="font-display text-xl ccs-navy mb-1" style={{fontWeight: 500}}>Tasks that STAY 100% human</h2>
+          <p className="text-xs ccs-slate mb-4">Check every task your team wants humans to do without AI assistance.</p>
+          <div className="space-y-2">
+            {ALL_TASK_TAGS.map(tag => {
+              const info = TASK_TAG_LABELS[tag];
+              const checked = taskSet.has(tag);
+              return (
+                <label key={tag} className="flex items-start gap-3 p-3 ccs-card cursor-pointer hover:bg-slate-50">
+                  <input type="checkbox" checked={checked} onChange={() => toggleTask(tag)}
+                    style={{marginTop: '3px', width: '18px', height: '18px', accentColor: '#0F1729'}} />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium ccs-navy">{info.label}</div>
+                    <div className="text-xs ccs-slate">{info.desc}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Variable 3: Disclosure */}
+        <div className="ccs-card-elevated p-6 mb-5">
+          <div className="text-xs uppercase tracking-wider ccs-slate font-medium mb-1">Variable 3</div>
+          <h2 className="font-display text-xl ccs-navy mb-1" style={{fontWeight: 500}}>Require disclosure on every AI-touched client interaction?</h2>
+          <p className="text-xs ccs-slate mb-4">Hard switch — one or the other. No in-between.</p>
+          <div className="space-y-2">
+            <label className="flex items-center gap-3 p-3 ccs-card cursor-pointer hover:bg-slate-50">
+              <input type="radio" name="disclosure" checked={disclosure === true} onChange={() => setDisclosure(true)}
+                style={{width: '18px', height: '18px', accentColor: '#0F1729'}} />
+              <div>
+                <div className="text-sm font-medium ccs-navy">Yes — always</div>
+                <div className="text-xs ccs-slate">Every client-facing AI-touched output must have disclosure baked in.</div>
+              </div>
+            </label>
+            <label className="flex items-center gap-3 p-3 ccs-card cursor-pointer hover:bg-slate-50">
+              <input type="radio" name="disclosure" checked={disclosure === false} onChange={() => setDisclosure(false)}
+                style={{width: '18px', height: '18px', accentColor: '#0F1729'}} />
+              <div>
+                <div className="text-sm font-medium ccs-navy">No — only when asked</div>
+                <div className="text-xs ccs-slate">The team discloses AI use only if the client asks.</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {/* Preview Impact */}
+        <div className="ccs-card-elevated p-6 mb-6" style={{backgroundColor:'#F5F4EE', borderColor:'#B45309'}}>
+          <div className="text-xs uppercase tracking-wider font-semibold mb-2" style={{color:'#B45309'}}>📊 Preview Impact</div>
+          <div className="text-sm ccs-navy mb-3">
+            With these settings, <strong>{impact.decisionsAffected} of {CASE_0.decisions.length} decisions</strong> have options that would violate your policy. (Which options? That's for you to figure out when you run the Sprint.)
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="ccs-card p-3">
+              <div className="text-xs uppercase tracking-wider ccs-slate">Creation</div>
+              <div className="font-display text-2xl ccs-navy tabular" style={{fontWeight: 500}}>{impact.creation}</div>
+              <div className="text-xs ccs-slate">option-violations</div>
+            </div>
+            <div className="ccs-card p-3">
+              <div className="text-xs uppercase tracking-wider ccs-slate">Transparency</div>
+              <div className="font-display text-2xl ccs-navy tabular" style={{fontWeight: 500}}>{impact.transparency}</div>
+              <div className="text-xs ccs-slate">option-violations</div>
+            </div>
+            <div className="ccs-card p-3">
+              <div className="text-xs uppercase tracking-wider ccs-slate">Deployment</div>
+              <div className="font-display text-2xl ccs-navy tabular" style={{fontWeight: 500}}>{impact.deployment}</div>
+              <div className="text-xs ccs-slate">option-violations</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-4 border-t ccs-border">
+          <button onClick={onCancel} className="text-sm ccs-slate hover:ccs-navy">← Cancel (keep current)</button>
+          <button onClick={save} disabled={!changedFromBaseline && !startFromRevised}
+            className={`px-6 py-3 rounded font-medium text-sm ${(changedFromBaseline || startFromRevised) ? 'ccs-navy-bg ccs-hover-navy text-white' : 'bg-slate-200 ccs-slate cursor-not-allowed'}`}>
+            Save Revisions
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // DEBRIEF — Policy Fidelity readout
 // ═══════════════════════════════════════════════════════════════════
 function DebriefScreen({ team, onBackToDashboard }) {
-  const fidelity = computePolicyFidelity(team.code, team.picks);
+  const fidelity = computePolicyFidelity(team.code, team.picks, team);
   if (!fidelity) {
     return <div className="min-h-screen flex items-center justify-center ccs-cream">
       <div className="ccs-card p-8">No policy on file for this team.</div>
@@ -680,6 +964,15 @@ function DebriefScreen({ team, onBackToDashboard }) {
         {policy.policyPending && (
           <div className="ccs-card p-4 mb-6" style={{backgroundColor: '#FEF3C7', borderColor: '#B45309'}}>
             <div className="text-sm ccs-navy"><strong>Note:</strong> Your team's S5 Policy Share-Out hasn't been submitted yet. This fidelity check uses your 4D Charter rules only. Submit your policy for a sharper reading.</div>
+          </div>
+        )}
+        {fidelity.hasRevisions && (
+          <div className="ccs-card p-4 mb-6" style={{backgroundColor: '#F0E6D2', borderLeftWidth: '4px', borderLeftColor: '#B45309'}}>
+            <div className="text-xs uppercase tracking-wider font-semibold mb-1" style={{color: '#B45309'}}>Scored against your REVISED policy</div>
+            <div className="text-sm ccs-navy">
+              This fidelity check uses the revisions your team saved {team.revisedAt ? `on ${new Date(team.revisedAt).toLocaleString()}` : ''}.
+              Your Session 5 baseline is preserved — your instructor can compare before vs after.
+            </div>
           </div>
         )}
 
@@ -752,7 +1045,7 @@ function DebriefScreen({ team, onBackToDashboard }) {
 // ═══════════════════════════════════════════════════════════════════
 // ADMIN CONSOLE
 // ═══════════════════════════════════════════════════════════════════
-function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll }) {
+function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll, onPolicyEditToggle, onAdminEditTeam, onAdminResetTeam }) {
   const [pw, setPw] = useState('');
   const [auth, setAuth] = useState(false);
   const [err, setErr] = useState('');
@@ -829,6 +1122,23 @@ function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll }) {
             <button onClick={onReleaseToggle}
               className={`px-5 py-2.5 rounded text-sm font-medium ${data.released ? 'bg-white ccs-navy border ccs-border hover:bg-slate-50' : 'ccs-emerald-bg ccs-hover-emerald text-white'}`}>
               {data.released ? 'Lock the Sprint' : 'Release the Sprint'}
+            </button>
+          </div>
+        </div>
+
+        <div className="ccs-card-elevated p-6" style={{borderLeftWidth: '4px', borderLeftColor: '#B45309'}}>
+          <h2 className="font-display text-2xl ccs-navy mb-1" style={{fontWeight: 500}}>Policy Editing</h2>
+          <p className="text-sm ccs-slate mb-4">When unlocked, teams see a "Revise Policy" button on their dashboard and can edit the three simulator variables directly. Baseline is always preserved for before/after comparison.</p>
+          <div className="flex items-center gap-4">
+            <div className={`px-4 py-2 rounded text-sm font-medium`}
+              style={{backgroundColor: data.policyEditingUnlocked ? '#B45309' : '#E2E8F0',
+                      color: data.policyEditingUnlocked ? 'white' : '#475569'}}>
+              {data.policyEditingUnlocked ? 'UNLOCKED — teams can revise' : 'LOCKED — teams cannot revise'}
+            </div>
+            <button onClick={onPolicyEditToggle}
+              className={`px-5 py-2.5 rounded text-sm font-medium ${data.policyEditingUnlocked ? 'bg-white ccs-navy border ccs-border hover:bg-slate-50' : 'text-white'}`}
+              style={!data.policyEditingUnlocked ? {backgroundColor: '#B45309'} : {}}>
+              {data.policyEditingUnlocked ? 'Lock Editing' : 'Unlock Editing'}
             </button>
           </div>
         </div>
@@ -950,9 +1260,11 @@ function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll }) {
 
         {/* PER-TEAM CARDS */}
         {data.teams.map(t => {
-          const policy = TEAM_POLICIES[t.code];
+          const baseline = TEAM_POLICIES[t.code];
+          const policy = getActivePolicy(t.code, t);
+          const hasRevisions = !!(t.revisedPolicy);
           const picksCount = Object.keys(t.picks || {}).length;
-          const fid = picksCount >= 5 ? computePolicyFidelity(t.code, t.picks) : null;
+          const fid = picksCount >= 5 ? computePolicyFidelity(t.code, t.picks, t) : null;
           const isExpanded = expanded[t.code];
           const status = t.completed ? 'Complete' : picksCount >= 5 ? 'Picked all · not submitted' : picksCount > 0 ? `In progress (${picksCount}/5)` : 'Not started';
           const statusColor = t.completed ? 'ccs-emerald' : picksCount >= 5 ? 'ccs-amber' : picksCount > 0 ? 'ccs-amber' : 'ccs-slate';
@@ -967,6 +1279,10 @@ function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll }) {
                   <div className="text-xs ccs-slate">{policy?.firm && t.firmName && t.firmName !== policy.firm ? `(logged in as "${t.firmName}")` : ''}</div>
                 </div>
                 <div className={`text-xs font-semibold uppercase tracking-wider ${statusColor}`}>{status}</div>
+                {hasRevisions && (
+                  <div className="text-xs font-semibold uppercase tracking-wider px-2 py-1 rounded"
+                       style={{backgroundColor: '#FEF3C7', color: '#B45309'}}>Revised</div>
+                )}
                 {fid && (
                   <div className={`font-display text-xl tabular ${fid.honored === fid.total ? 'ccs-emerald' : fid.honored >= fid.total/2 ? 'ccs-amber' : 'ccs-red'}`} style={{fontWeight: 500}}>
                     {fid.honored}/{fid.total}
@@ -1083,10 +1399,41 @@ function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll }) {
 
                   {/* Reference context */}
                   <div className="text-xs ccs-slate pt-3 border-t ccs-border space-y-1">
-                    <div><span className="font-medium ccs-navy">Members:</span> {policy.firm === 'Money Talks' ? 'Peter · Alexander · Braedyn · Morgan' : '(see Overview Excel)'}</div>
                     <div><span className="font-medium ccs-navy">Disclosure text:</span> {policy.disclosureText}</div>
                     <div><span className="font-medium ccs-navy">Strongest rule:</span> {policy.strongestRule}</div>
                     {policy.whereDisagreed && <div><span className="font-medium ccs-navy">Where they flagged tension:</span> {policy.whereDisagreed}</div>}
+                  </div>
+
+                  {/* Baseline comparison if revised */}
+                  {hasRevisions && (
+                    <div className="ccs-card p-4" style={{backgroundColor: '#FEF3C7'}}>
+                      <div className="text-xs uppercase tracking-wider font-semibold mb-2" style={{color: '#B45309'}}>
+                        BASELINE (Session 5) — preserved for comparison
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div><span className="font-medium ccs-navy">dataNeverIntoAI:</span> <span className="font-mono ccs-slate">{baseline.dataNeverIntoAI.join(', ') || '(empty)'}</span></div>
+                        <div><span className="font-medium ccs-navy">humanOnlyTasks:</span> <span className="font-mono ccs-slate">{baseline.humanOnlyTasks.join(', ') || '(empty)'}</span></div>
+                        <div><span className="font-medium ccs-navy">disclosureRequired:</span> <span className="font-mono ccs-slate">{String(baseline.disclosureRequired)}</span></div>
+                        <div><span className="font-medium ccs-navy">Revised at:</span> <span className="ccs-slate">{t.revisedAt ? new Date(t.revisedAt).toLocaleString() : '—'}</span></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Admin actions */}
+                  <div className="pt-3 border-t ccs-border flex items-center justify-between flex-wrap gap-2">
+                    <div className="text-xs ccs-slate">Admin actions:</div>
+                    <div className="flex gap-2">
+                      <button onClick={() => onAdminEditTeam && onAdminEditTeam(t.code)}
+                        className="px-3 py-1.5 rounded text-xs font-medium bg-white ccs-navy border ccs-border hover:bg-slate-50">
+                        Edit this team's policy
+                      </button>
+                      {hasRevisions && (
+                        <button onClick={() => { if (confirm(`Reset ${baseline.firm}'s policy to Session 5 baseline?`)) onAdminResetTeam && onAdminResetTeam(t.code); }}
+                          className="px-3 py-1.5 rounded text-xs font-medium bg-white ccs-red border" style={{borderColor: '#B91C1C'}}>
+                          Reset to baseline
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1110,9 +1457,10 @@ function AdminScreen({ data, onReleaseToggle, onLogout, onResetAll }) {
 // ═══════════════════════════════════════════════════════════════════
 function App() {
   const [data, setData] = useState(null);
-  const [view, setView] = useState('login');  // login | admin | dashboard | brief | decisions | debrief
+  const [view, setView] = useState('login');  // login | admin | dashboard | brief | decisions | debrief | revise | admin-edit
   const [team, setTeam] = useState(null);
   const [picks, setPicks] = useState({});
+  const [adminEditCode, setAdminEditCode] = useState(null);
 
   useEffect(() => { boot(); }, []);
 
@@ -1156,17 +1504,64 @@ function App() {
     setView('debrief');
   }
 
-  function logout() { setTeam(null); setPicks({}); setView('login'); }
+  // Student saves their own policy revisions
+  async function handleSavePolicy(revisedPolicy) {
+    const now = new Date().toISOString();
+    const newTeam = { ...team, revisedPolicy, revisedAt: now };
+    const newData = { ...data, teams: data.teams.map(x => x.code === team.code ? newTeam : x) };
+    await saveData(newData); setData(newData); setTeam(newTeam);
+    setView('dashboard');
+  }
+
+  // Admin toggles policy editing lock
+  async function handlePolicyEditToggle() {
+    const newData = { ...data, policyEditingUnlocked: !data.policyEditingUnlocked };
+    await saveData(newData); setData(newData);
+  }
+
+  // Admin saves a team's policy revisions (editing on behalf of a team)
+  async function handleAdminSavePolicy(revisedPolicy) {
+    if (!adminEditCode) return;
+    const now = new Date().toISOString();
+    const newData = { ...data, teams: data.teams.map(x =>
+      x.code === adminEditCode ? { ...x, revisedPolicy, revisedAt: now } : x) };
+    await saveData(newData); setData(newData);
+    setAdminEditCode(null);
+    setView('admin');
+  }
+
+  // Admin resets a team's revisions back to baseline
+  async function handleAdminResetTeam(code) {
+    const newData = { ...data, teams: data.teams.map(x =>
+      x.code === code ? { ...x, revisedPolicy: null, revisedAt: null } : x) };
+    await saveData(newData); setData(newData);
+  }
+
+  function logout() { setTeam(null); setPicks({}); setAdminEditCode(null); setView('login'); }
 
   return (
     <React.Fragment>
       <StyleInjection />
       {view === 'login' && <LoginScreen onLogin={handleLogin} onAdmin={() => setView('admin')} />}
-      {view === 'admin' && <AdminScreen data={data} onReleaseToggle={handleReleaseToggle} onLogout={logout} onResetAll={handleResetAll} />}
+      {view === 'admin' && <AdminScreen data={data}
+        onReleaseToggle={handleReleaseToggle}
+        onLogout={logout}
+        onResetAll={handleResetAll}
+        onPolicyEditToggle={handlePolicyEditToggle}
+        onAdminEditTeam={(code) => { setAdminEditCode(code); setView('admin-edit'); }}
+        onAdminResetTeam={handleAdminResetTeam} />}
+      {view === 'admin-edit' && adminEditCode && (() => {
+        const t = data.teams.find(x => x.code === adminEditCode);
+        return <RevisePolicyScreen team={t} teamCode={adminEditCode} isAdmin={true}
+          onSave={handleAdminSavePolicy} onCancel={() => { setAdminEditCode(null); setView('admin'); }} />;
+      })()}
       {view === 'dashboard' && team && <Dashboard data={data} team={team}
         onBegin={() => setView('brief')}
         onReviewDebrief={() => setView('debrief')}
-        onLogout={logout} />}
+        onLogout={logout}
+        onRevisePolicy={() => setView('revise')} />}
+      {view === 'revise' && team && <RevisePolicyScreen team={team} teamCode={team.code}
+        onSave={handleSavePolicy} onCancel={() => setView('dashboard')} />}
       {view === 'brief' && team && <BriefScreen team={team}
         onContinue={() => setView('decisions')}
         onBack={() => setView('dashboard')} />}
